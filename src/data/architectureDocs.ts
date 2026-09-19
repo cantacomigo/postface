@@ -605,25 +605,30 @@ export function calculateNextDelay(currentPostIndex, config) {
  * Spintax Engine para a Extensão AutoPost FB
  * Resolve sintaxes {Opção 1|Opção 2|Opção 3} e Spintax Aninhado {Opção A|{Opção B1|Opção B2}}
  */
-export function resolveSpintax(text) {
-  if (!text) return '';
+function resolveSpintax(text) {
+  if (text == null) return '';
+  let resolved = String(text);
+  if (!resolved.includes('{')) return resolved;
+
   // Localiza os grupos mais internos primeiro para resolução recursiva
   const regex = /\\{([^{}]+)\\}/;
-  let resolved = text;
   let safetyLimit = 100;
 
   while (regex.test(resolved) && safetyLimit > 0) {
     safetyLimit--;
-    resolved = resolved.replace(regex, (_, choicesStr) => {
+    resolved = resolved.replace(regex, function(_, choicesStr) {
+      if (!choicesStr) return '';
       const choices = choicesStr.split('|');
       const chosen = choices[Math.floor(Math.random() * choices.length)];
-      return chosen !== undefined ? chosen.trim() : '';
+      return chosen != null ? chosen.trim() : '';
     });
   }
 
   return resolved;
 }
-`
+
+if (typeof window !== 'undefined') window.resolveSpintax = resolveSpintax;
+if (typeof globalThis !== 'undefined') globalThis.resolveSpintax = resolveSpintax;`
   },
   {
     filename: 'checkpoint-watcher.js',
@@ -632,25 +637,44 @@ export function resolveSpintax(text) {
     description: 'Guardião Anti-Bloqueio: Monitora avisos de restrição, checkpoints e bloqueios no DOM do Facebook.',
     code: `/**
  * Checkpoint Watcher para a Extensão AutoPost FB
- * Monitora avisos de restrição ou bloqueio no DOM do Facebook
+ * Monitora avisos de restrição ou bloqueio no DOM do Facebook com proteção contra null
  */
-export function detectFacebookCheckpoint() {
-  const bodyText = document.body.innerText || '';
-  const checkpointPatterns = [
-    'Você está temporariamente bloqueado',
-    'Sua conta está com restrição',
-    'Ação bloqueada',
-    'Restringimos certas atividades',
-    'Confirmar sua identidade',
-    'Tentativa suspeita de login'
-  ];
+function detectFacebookCheckpoint() {
+  try {
+    const bodyText = (document.body && document.body.innerText)
+      ? document.body.innerText
+      : (document.documentElement && document.documentElement.innerText)
+        ? document.documentElement.innerText
+        : '';
 
-  for (const pattern of checkpointPatterns) {
-    if (bodyText.includes(pattern)) {
-      return { isBlocked: true, reason: pattern };
+    if (!bodyText) return { isBlocked: false };
+
+    const checkpointPatterns = [
+      'Você está temporariamente bloqueado',
+      'Sua conta está com restrição',
+      'Ação bloqueada',
+      'Restringimos certas atividades',
+      'Confirmar sua identidade',
+      'Tentativa suspeita de login',
+      'Sua conta foi suspensa',
+      'Temporarily blocked',
+      'Account restricted',
+      'Action blocked'
+    ];
+
+    for (let i = 0; i < checkpointPatterns.length; i++) {
+      const pattern = checkpointPatterns[i];
+      if (bodyText.includes(pattern)) {
+        return { isBlocked: true, reason: pattern };
+      }
     }
+  } catch (err) {
+    console.warn('[AutoPost FB] Erro ao verificar checkpoints:', err);
   }
   return { isBlocked: false };
-}`
+}
+
+if (typeof window !== 'undefined') window.detectFacebookCheckpoint = detectFacebookCheckpoint;
+if (typeof globalThis !== 'undefined') globalThis.detectFacebookCheckpoint = detectFacebookCheckpoint;`
   }
 ];

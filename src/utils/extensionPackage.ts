@@ -277,7 +277,22 @@ async function insertTextIntoEditor(element, text) {
 }
 
 function checkAccountRestrictions() {
-  const bodyText = document.body.innerText || '';
+  if (typeof detectFacebookCheckpoint === 'function') {
+    const check = detectFacebookCheckpoint();
+    if (check && check.isBlocked) {
+      throw new Error('RESTRICTION_DETECTED: O Facebook alertou "' + check.reason + '". Pausando campanhas por segurança.');
+    }
+    return;
+  }
+
+  const bodyText = (document.body && document.body.innerText)
+    ? document.body.innerText
+    : (document.documentElement && document.documentElement.innerText)
+      ? document.documentElement.innerText
+      : '';
+
+  if (!bodyText) return;
+
   const checkpointPatterns = [
     'Você está temporariamente bloqueado',
     'Sua conta está com restrição',
@@ -337,7 +352,27 @@ function sleep(ms) {
  * Gerencia a fila de postagens em abas em segundo plano sem exigir cliques do usuário.
  */
 
-import { calculateNextDelay } from '../utils/anti-ban-timing.js';
+function calculateNextDelay(currentPostIndex, config) {
+  const isEndOfBatch = (currentPostIndex + 1) % (config.blockBatchSize || 5) === 0;
+  if (isEndOfBatch) {
+    const minP = config.blockPauseMinSeconds || 500;
+    const maxP = config.blockPauseMaxSeconds || 900;
+    const batchDelay = Math.floor(minP + Math.random() * (maxP - minP));
+    return {
+      delaySeconds: batchDelay,
+      isBatchPause: true,
+      reason: 'Pausa de resfriamento (' + Math.round(batchDelay / 60) + ' min) após ' + (currentPostIndex + 1) + ' posts.'
+    };
+  }
+  const minD = config.minDelaySeconds || 120;
+  const maxD = config.maxDelaySeconds || 300;
+  const standardDelay = Math.floor(minD + Math.random() * (maxD - minD));
+  return {
+    delaySeconds: standardDelay,
+    isBatchPause: false,
+    reason: 'Intervalo seguro anti-bloqueio (' + standardDelay + 's).'
+  };
+}
 
 let state = {
   isRunning: false,
@@ -515,53 +550,89 @@ function broadcast(msg) {
 }
 `;
 
-  // 5. SPINTAX ENGINE (Suporta Spintax Simples e Aninhado)
+  // 5. SPINTAX ENGINE (Suporta Spintax Simples e Aninhado - Compatível com Content Script e Window)
   const SPINTAX_ENGINE_CODE = `/**
  * Spintax Engine para a Extensão AutoPost FB
  * Resolve sintaxes {Opção 1|Opção 2|Opção 3} e Spintax Aninhado {Opção A|{Opção B1|Opção B2}}
  */
-export function resolveSpintax(text) {
-  if (!text) return '';
+function resolveSpintax(text) {
+  if (text == null) return '';
+  let resolved = String(text);
+  if (!resolved.includes('{')) return resolved;
+
   // Localiza chaves mais internas primeiro para resolver recursivamente
   const regex = /\\{([^{}]+)\\}/;
-  let resolved = text;
   let safetyLimit = 100;
 
   while (regex.test(resolved) && safetyLimit > 0) {
     safetyLimit--;
-    resolved = resolved.replace(regex, (_, choicesStr) => {
+    resolved = resolved.replace(regex, function(_, choicesStr) {
+      if (!choicesStr) return '';
       const choices = choicesStr.split('|');
       const chosen = choices[Math.floor(Math.random() * choices.length)];
-      return chosen !== undefined ? chosen.trim() : '';
+      return chosen != null ? chosen.trim() : '';
     });
   }
 
   return resolved;
 }
+
+// Expõe no escopo global para que outros content scripts acessem
+if (typeof window !== 'undefined') {
+  window.resolveSpintax = resolveSpintax;
+}
+if (typeof globalThis !== 'undefined') {
+  globalThis.resolveSpintax = resolveSpintax;
+}
 `;
 
-  // 6. CHECKPOINT WATCHER
+  // 6. CHECKPOINT WATCHER (Compatível com Content Script e Window)
   const CHECKPOINT_WATCHER_CODE = `/**
  * Checkpoint Watcher para a Extensão AutoPost FB
- * Monitora avisos de restrição ou bloqueio no DOM do Facebook
+ * Monitora avisos de restrição ou bloqueio no DOM do Facebook com proteção contra null
  */
-export function detectFacebookCheckpoint() {
-  const bodyText = document.body.innerText || '';
-  const checkpointPatterns = [
-    'Você está temporariamente bloqueado',
-    'Sua conta está com restrição',
-    'Ação bloqueada',
-    'Restringimos certas atividades',
-    'Confirmar sua identidade',
-    'Tentativa suspeita de login'
-  ];
+function detectFacebookCheckpoint() {
+  try {
+    const bodyText = (document.body && document.body.innerText)
+      ? document.body.innerText
+      : (document.documentElement && document.documentElement.innerText)
+        ? document.documentElement.innerText
+        : '';
 
-  for (const pattern of checkpointPatterns) {
-    if (bodyText.includes(pattern)) {
-      return { isBlocked: true, reason: pattern };
+    if (!bodyText) return { isBlocked: false };
+
+    const checkpointPatterns = [
+      'Você está temporariamente bloqueado',
+      'Sua conta está com restrição',
+      'Ação bloqueada',
+      'Restringimos certas atividades',
+      'Confirmar sua identidade',
+      'Tentativa suspeita de login',
+      'Sua conta foi suspensa',
+      'Temporarily blocked',
+      'Account restricted',
+      'Action blocked',
+      'Confirm your identity'
+    ];
+
+    for (let i = 0; i < checkpointPatterns.length; i++) {
+      const pattern = checkpointPatterns[i];
+      if (bodyText.includes(pattern)) {
+        return { isBlocked: true, reason: pattern };
+      }
     }
+  } catch (err) {
+    console.warn('[AutoPost FB] Erro ao verificar checkpoints:', err);
   }
   return { isBlocked: false };
+}
+
+// Expõe no escopo global para que outros content scripts acessem
+if (typeof window !== 'undefined') {
+  window.detectFacebookCheckpoint = detectFacebookCheckpoint;
+}
+if (typeof globalThis !== 'undefined') {
+  globalThis.detectFacebookCheckpoint = detectFacebookCheckpoint;
 }
 `;
 
