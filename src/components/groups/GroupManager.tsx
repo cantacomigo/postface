@@ -347,11 +347,11 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
           setSyncProgressStep(0);
 
           if (!received) {
-            alert(
-              'A extensão do Chrome não retornou dados em segundo plano nesta tentativa.\\n\\nUtilize a aba "Script do Console": ela lê os seus grupos reais diretamente da aba aberta no Facebook com 100% de precisão e copia todos os links reais para você!'
-            );
+            setSyncToast('A extensão do Chrome não está instalada no seu navegador. Usando o Extrator do Facebook (Aba 1) abaixo:');
+            setTimeout(() => setSyncToast(null), 6000);
+            setAutoSyncTab('console_script');
           }
-        }, 1600);
+        }, 1400);
       }
     }, 1200);
   };
@@ -1434,17 +1434,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
             {/* Tabs */}
             <div className="flex border-b border-slate-200 gap-2">
               <button
-                onClick={() => setAutoSyncTab('extension')}
-                className={`pb-2.5 text-xs font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${
-                  autoSyncTab === 'extension'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                1. Extensão Chrome (Automático)
-              </button>
-              <button
                 onClick={() => setAutoSyncTab('console_script')}
                 className={`pb-2.5 text-xs font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${
                   autoSyncTab === 'console_script'
@@ -1453,7 +1442,18 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                 }`}
               >
                 <Copy className="w-3.5 h-3.5" />
-                2. Script do Console (Sem Instalação)
+                ⭐ 1. Extrator do Facebook (Recomendado - Sem Instalação)
+              </button>
+              <button
+                onClick={() => setAutoSyncTab('extension')}
+                className={`pb-2.5 text-xs font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${
+                  autoSyncTab === 'extension'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                2. Extensão Chrome (Opcional)
               </button>
               <button
                 onClick={() => setAutoSyncTab('demo_pack')}
@@ -1464,106 +1464,41 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                3. Pacotes por Nicho (Prontos)
+                3. Pacotes por Nicho
               </button>
             </div>
 
-            {/* Tab 1: Extension Auto Sync */}
-            {autoSyncTab === 'extension' && (
-              <div className="space-y-4">
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-800 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      Ponte com a Sessão Ativa do Facebook
-                    </span>
-                    <span className="text-[11px] text-slate-500">Manifest V3 Bridge</span>
-                  </div>
-
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Com o Facebook logado em qualquer aba do seu navegador, a extensão acessa a página oficial de comunidades em{' '}
-                    <code className="bg-white px-1.5 py-0.5 rounded border border-slate-300 font-mono text-[11px] text-blue-600">
-                      facebook.com/groups/joins
-                    </code>
-                    , varre <strong>apenas os grupos dos quais você participa</strong> e sincroniza diretamente com este painel (sem inventar grupos genéricos).
-                  </p>
-
-                  {isSyncing && (
-                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-900 space-y-2">
-                      <div className="flex items-center gap-2 font-medium">
-                        <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
-                        <span>{syncStatusMessage}</span>
-                      </div>
-                      <div className="w-full bg-blue-200 rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
-                          style={{ width: `${(syncProgressStep / 2) * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
-                    <button
-                      onClick={handleRunExtensionSync}
-                      disabled={isSyncing}
-                      className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium text-xs rounded-xl shadow-xs transition-colors"
-                    >
-                      <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                      {isSyncing ? 'Sincronizando Comunidades...' : 'Puxar Grupos da Minha Conta Agora'}
-                    </button>
-
-                    <a
-                      href="https://www.facebook.com/groups/joins/"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium rounded-xl transition-colors"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      Abrir facebook.com/groups/joins
-                    </a>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-200">
-                    <button
-                      type="button"
-                      onClick={() => setAutoSyncTab('console_script')}
-                      className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-900 font-semibold text-xs rounded-xl transition-colors"
-                    >
-                      <span>⚡</span>
-                      <span>Usar Extrator do Console (Sem precisar instalar extensão)</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Tab 2: Console Scraper Script */}
+            {/* Tab 1: Console Scraper Script (Recommended & Instant) */}
             {autoSyncTab === 'console_script' && (
               <div className="space-y-4">
                 <div className="text-xs text-slate-600 space-y-2">
-                  <p className="font-semibold text-slate-800">
-                    Método Instantâneo (Extração em 15 segundos sem instalar nada):
+                  <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <span>⚡</span>
+                    Extração Direta dos Seus Grupos Reais (Leva 15 segundos):
                   </p>
                   <ol className="list-decimal pl-5 space-y-1.5 text-[11px] text-slate-600">
                     <li>
-                      Abra sua página de grupos no Facebook:{' '}
+                      Abra a sua página de grupos no Facebook:{' '}
                       <a
                         href="https://www.facebook.com/groups/joins/"
                         target="_blank"
                         rel="noreferrer"
-                        className="text-blue-600 underline font-medium"
+                        className="text-blue-600 underline font-medium inline-flex items-center gap-0.5"
                       >
                         facebook.com/groups/joins
+                        <ExternalLink className="w-2.5 h-2.5" />
                       </a>
                     </li>
                     <li>
-                      Pressione a tecla <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-300 rounded font-mono text-[10px]">F12</kbd> (ou clique com botão direito na página &gt; <em>Inspecionar</em> &gt; abra a aba <strong>Console</strong>).
+                      Pressione <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-300 rounded font-mono text-[10px]">F12</kbd> (ou clique com botão direito na tela &gt; <em>Inspecionar</em> &gt; aba <strong>Console</strong>).
                     </li>
-                    <li>Clique no botão abaixo para copiar o Script Extrator (formato de linha única, sem quebra).</li>
+                    <li>Clique no botão preto abaixo para copiar o Script Extrator.</li>
                     <li>Cole no Console do Facebook e tecle <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-300 rounded font-mono text-[10px]">Enter</kbd>.</li>
                     <li>
-                      O script varre a lista, copia todos os grupos para sua Área de Transferência e avisa você na tela! Depois, basta colar o resultado abaixo e clicar em <strong>Importar</strong>.
+                      O script rola a tela e exibe uma janela na tela do Facebook: clique em <strong>&quot;COPIAR DADOS AGORA&quot;</strong>.
+                    </li>
+                    <li>
+                      Volte aqui e clique em <strong>&quot;Colar do Clipboard&quot;</strong> ou cole na caixa abaixo!
                     </li>
                   </ol>
                 </div>
@@ -1573,14 +1508,14 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                     <span>⚠️</span> Sobre o aviso vermelho &quot;Espere!&quot; que o Facebook exibe no Console:
                   </p>
                   <p className="text-amber-800">
-                    O Facebook exibe esse aviso por padrão para qualquer um que abre o Console F12 (proteção contra golpes/Self-XSS). O nosso script <strong>não toca em senhas nem credenciais</strong>: ele apenas lê os links de grupos que você já participa e copia para a sua área de transferência.
+                    O Facebook exibe esse aviso padrão no Console por precaução contra golpes. O nosso script <strong>não toca em senhas nem credenciais</strong>: ele apenas lê os nomes e links oficiais dos grupos que você já participa.
                   </p>
                 </div>
 
                 <div className="relative">
                   <button
                     onClick={handleCopyScript}
-                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs rounded-xl shadow-xs transition-colors"
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors"
                   >
                     {copiedConsoleScript ? (
                       <>
@@ -1640,6 +1575,72 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                     <CheckCircle2 className="w-4 h-4" />
                     Processar e Importar Grupos Extraídos
                   </button>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 2: Extension Auto Sync */}
+            {autoSyncTab === 'extension' && (
+              <div className="space-y-4">
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-800 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-blue-500" />
+                      Ponte com Extensão Local do Chrome
+                    </span>
+                    <span className="text-[11px] text-slate-500">Manifest V3</span>
+                  </div>
+
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Caso você tenha carregado os arquivos descompactados da extensão em <code>chrome://extensions</code> no modo desenvolvedor, você pode acionar a varredura automática:
+                  </p>
+
+                  {isSyncing && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-900 space-y-2">
+                      <div className="flex items-center gap-2 font-medium">
+                        <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                        <span>{syncStatusMessage}</span>
+                      </div>
+                      <div className="w-full bg-blue-200 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                          style={{ width: `${(syncProgressStep / 2) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+                    <button
+                      onClick={handleRunExtensionSync}
+                      disabled={isSyncing}
+                      className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium text-xs rounded-xl shadow-xs transition-colors"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                      {isSyncing ? 'Sincronizando Comunidades...' : 'Tentar Sincronizar via Extensão'}
+                    </button>
+
+                    <a
+                      href="https://www.facebook.com/groups/joins/"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium rounded-xl transition-colors"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Abrir facebook.com/groups/joins
+                    </a>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setAutoSyncTab('console_script')}
+                      className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-900 font-semibold text-xs rounded-xl transition-colors"
+                    >
+                      <span>⚡</span>
+                      <span>Usar Extrator do Facebook (Recomendado - 100% Funcional)</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
