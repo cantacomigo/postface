@@ -124,6 +124,14 @@ export default function App() {
     setGroups((prev) => [...newGroups, ...prev]);
   };
 
+  const handleClearAllGroups = () => {
+    setGroups([]);
+  };
+
+  const handleReplaceAllGroups = (newGroups: FacebookGroup[]) => {
+    setGroups(newGroups);
+  };
+
   // Handlers for categories
   const handleSaveCategory = (cat: GroupCategory) => {
     setCategories((prev) => {
@@ -190,6 +198,8 @@ export default function App() {
             onSaveGroup={handleSaveGroup}
             onDeleteGroup={handleDeleteGroup}
             onBulkAddGroups={handleBulkAddGroups}
+            onClearAllGroups={handleClearAllGroups}
+            onReplaceAllGroups={handleReplaceAllGroups}
             onSaveCategory={handleSaveCategory}
             onDeleteCategory={handleDeleteCategory}
           />
