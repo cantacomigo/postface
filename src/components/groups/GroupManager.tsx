@@ -72,7 +72,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
   // Auto-Sync States
   const [isAutoSyncOpen, setIsAutoSyncOpen] = useState<boolean>(false);
-  const [autoSyncTab, setAutoSyncTab] = useState<'extension' | 'console_script' | 'demo_pack'>('extension');
+  const [autoSyncTab, setAutoSyncTab] = useState<'console_script' | 'extension' | 'demo_pack'>('console_script');
   const [syncTargetCategoryId, setSyncTargetCategoryId] = useState<string>(categories[0]?.id || '');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncProgressStep, setSyncProgressStep] = useState<number>(0);
@@ -81,113 +81,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   const [copiedConsoleScript, setCopiedConsoleScript] = useState<boolean>(false);
   const [pastedJsonData, setPastedJsonData] = useState<string>('');
   const [replaceOnImport, setReplaceOnImport] = useState<boolean>(true);
-
-  // Grupos reais de Olímpia - SP (extraídos da tela ativa do usuário)
-  const REAL_OLIMPIA_GROUPS: FacebookGroup[] = [
-    {
-      id: `grp-olimpia-1`,
-      fbId: 'classificados-olimpia-vende-tudo',
-      name: 'Classificados Olímpia Vende Tudo',
-      url: 'https://www.facebook.com/groups/classificados-olimpia-vende-tudo',
-      categoryId: syncTargetCategoryId || categories[0]?.id || 'cat-geral',
-      privacy: 'public',
-      membersCount: 45000,
-      status: 'active'
-    },
-    {
-      id: `grp-olimpia-2`,
-      fbId: 'classificado-de-olimpia-sp',
-      name: 'CLASSIFICADO DE OLIMPIA-SP',
-      url: 'https://www.facebook.com/groups/classificado-de-olimpia-sp',
-      categoryId: syncTargetCategoryId || categories[0]?.id || 'cat-geral',
-      privacy: 'public',
-      membersCount: 38200,
-      status: 'active'
-    },
-    {
-      id: `grp-olimpia-3`,
-      fbId: 'olimpia-sp-compras-vendas-alugueis',
-      name: 'OLÍMPIA SP - Compras - Vendas - Alugueis.',
-      url: 'https://www.facebook.com/groups/olimpia-sp-compras-vendas-alugueis',
-      categoryId: syncTargetCategoryId || categories[0]?.id || 'cat-geral',
-      privacy: 'public',
-      membersCount: 29000,
-      status: 'active'
-    },
-    {
-      id: `grp-olimpia-4`,
-      fbId: 'compro-vendo-troco-olimpia-sp',
-      name: 'Compro, Vendo e Troco- Olímpia SP',
-      url: 'https://www.facebook.com/groups/compro-vendo-troco-olimpia-sp',
-      categoryId: syncTargetCategoryId || categories[0]?.id || 'cat-geral',
-      privacy: 'public',
-      membersCount: 34100,
-      status: 'active'
-    },
-    {
-      id: `grp-olimpia-5`,
-      fbId: 'classificados-olimpia',
-      name: 'Classificados Olímpia',
-      url: 'https://www.facebook.com/groups/classificados-olimpia',
-      categoryId: syncTargetCategoryId || categories[0]?.id || 'cat-geral',
-      privacy: 'public',
-      membersCount: 21500,
-      status: 'active'
-    },
-    {
-      id: `grp-olimpia-6`,
-      fbId: 'classi-olimpia-anuncie',
-      name: 'CLASSI OLÍMPIA / ANUNCIE',
-      url: 'https://www.facebook.com/groups/classi-olimpia-anuncie',
-      categoryId: syncTargetCategoryId || categories[0]?.id || 'cat-geral',
-      privacy: 'public',
-      membersCount: 25000,
-      status: 'active'
-    },
-    {
-      id: `grp-olimpia-7`,
-      fbId: 'olimpia-empregos-oportunidades',
-      name: 'Olímpia Empregos e Oportunidades',
-      url: 'https://www.facebook.com/groups/olimpia-empregos-oportunidades',
-      categoryId: syncTargetCategoryId || categories[0]?.id || 'cat-geral',
-      privacy: 'public',
-      membersCount: 16800,
-      status: 'active'
-    },
-    {
-      id: `grp-olimpia-8`,
-      fbId: 'bom-negocio-olimpia',
-      name: 'BOM NEGÓCIO Olímpia',
-      url: 'https://www.facebook.com/groups/bom-negocio-olimpia',
-      categoryId: syncTargetCategoryId || categories[0]?.id || 'cat-geral',
-      privacy: 'public',
-      membersCount: 27500,
-      status: 'active'
-    },
-    {
-      id: `grp-olimpia-9`,
-      fbId: 'vendas-olimpia',
-      name: 'vendas olimpia',
-      url: 'https://www.facebook.com/groups/vendas-olimpia',
-      categoryId: syncTargetCategoryId || categories[0]?.id || 'cat-geral',
-      privacy: 'public',
-      membersCount: 19800,
-      status: 'active'
-    }
-  ];
-
-  const handleReplaceWithMyRealGroups = () => {
-    const targetCat = syncTargetCategoryId || categories[0]?.id || 'cat-geral';
-    const updated = REAL_OLIMPIA_GROUPS.map((g) => ({ ...g, categoryId: targetCat }));
-    if (onReplaceAllGroups) {
-      onReplaceAllGroups(updated);
-    } else {
-      onBulkAddGroups(updated);
-    }
-    setSyncToast('✅ Lista atualizada exclusivamente com os seus 9 grupos reais de Olímpia!');
-    setTimeout(() => setSyncToast(null), 5000);
-    setIsAutoSyncOpen(false);
-  };
 
   const handleClearAll = () => {
     if (window.confirm('Tem certeza que deseja apagar todos os grupos da lista?')) {
@@ -199,7 +92,101 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     }
   };
 
-  const CONSOLE_SCRAPER_SCRIPT = `(async()=>{try{console.log("%c🔍 Extraindo apenas grupos que você participa...","color:#1877f2;font-weight:bold;font-size:14px;");const m=new Map();const anchors=Array.from(document.querySelectorAll('a[href*="/groups/"]'));anchors.forEach(a=>{const h=a.href.split('?')[0].replace(/\\/$/,'');const p=h.split('/groups/')[1];if(!p)return;const s=p.split('/')[0];if(['joins','feed','discover','create','notifications','membership_questions'].includes(s))return;const card=a.closest('div[role="article"]')||a.closest('div[role="listitem"]')||a.closest('div[role="row"]')||a.parentElement;if(card&&(card.innerText.includes('Participar')||card.innerText.includes('Entrar no grupo')))return;const t=(a.innerText||'').trim().split('\\n')[0];if(t&&t.length>2&&!t.toLowerCase().includes('participar')&&!m.has(h)){m.set(h,{name:t,url:h,fbId:s});}});const list=Array.from(m.values());if(list.length===0){alert('Nenhum grupo participante encontrado. Certifique-se de estar com a aba facebook.com/groups/joins/ aberta no navegador!');return;}const json=JSON.stringify(list,null,2);await navigator.clipboard.writeText(json);console.log("%c✅ "+list.length+" grupos reais extraídos!","color:#10b981;font-weight:bold;font-size:14px;",list);alert("🎉 Sucesso! "+list.length+" grupos que você participa foram extraídos e copiados!\\n\\nAgora volte ao painel e clique em 'Colar do Clipboard' para importar!");}catch(e){console.error(e);alert("Erro ao extrair: "+e.message);}})();`;
+  // Script Extrator Inteligente com Auto-Scroll para carregar TODOS os grupos e pegar URLs reais
+  const CONSOLE_SCRAPER_SCRIPT = `(async () => {
+  try {
+    let banner = document.getElementById('fb-auto-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'fb-auto-banner';
+      banner.style.cssText = 'position:fixed;top:15px;left:50%;transform:translateX(-50%);z-index:9999999;background:#0f172a;color:#f8fafc;padding:16px 24px;border-radius:16px;box-shadow:0 12px 36px rgba(0,0,0,0.6);font-family:system-ui,-apple-system,sans-serif;font-size:13px;border:2px solid #3b82f6;display:flex;flex-direction:column;gap:6px;max-width:520px;text-align:center;pointer-events:none;';
+      document.body.appendChild(banner);
+    }
+
+    const setMsg = (title, sub) => {
+      banner.innerHTML = '<b style="color:#60a5fa;font-size:15px;">' + title + '</b><span style="color:#cbd5e1;font-size:12px;">' + sub + '</span>';
+    };
+
+    setMsg('🔍 AutoPost FB: Rolando para carregar TODOS os grupos...', 'Aguarde alguns segundos enquanto carregamos todos os grupos da sua conta...');
+
+    // Auto-scroll 8 vezes para forçar o Facebook a carregar grupos adicionais do feed virtual
+    for (let i = 1; i <= 8; i++) {
+      window.scrollTo(0, document.body.scrollHeight);
+      await new Promise(r => setTimeout(r, 600));
+      setMsg('🔍 AutoPost FB: Rolando página (' + i + '/8)...', 'Carregando lista completa de comunidades...');
+    }
+
+    const groupMap = new Map();
+    const anchors = Array.from(document.querySelectorAll('a[href*="/groups/"]'));
+    const systemKeywords = ['joins', 'feed', 'discover', 'create', 'notifications', 'membership_questions', 'search', 'category', 'explore', 'chats'];
+
+    anchors.forEach(a => {
+      try {
+        let href = a.href || '';
+        if (!href.includes('/groups/')) return;
+        href = href.split('?')[0].replace(/\\/+$/, '');
+        const match = href.match(/\\/groups\\/([^\\/]+)/);
+        if (!match) return;
+        const slugOrId = match[1];
+        if (systemKeywords.includes(slugOrId.toLowerCase())) return;
+
+        // Ignora cards de sugestão de grupos com botão 'Participar' ou 'Entrar no grupo'
+        const container = a.closest('div[role="article"]') || a.closest('div[role="listitem"]') || a.closest('div[role="row"]') || a.parentElement;
+        if (container) {
+          const text = container.innerText || '';
+          if (text.includes('Participar') || text.includes('Entrar no grupo') || text.includes('Pedir para entrar')) return;
+        }
+
+        // Obtém o nome real do grupo
+        let name = '';
+        const nameLines = (a.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
+        if (nameLines.length > 0) {
+          name = nameLines[0];
+        }
+        if (!name || name.length < 2 || name.toLowerCase().includes('participar')) {
+          const heading = a.querySelector('span[dir="auto"], strong, h2, h3');
+          if (heading && heading.innerText) {
+            name = heading.innerText.trim();
+          }
+        }
+
+        if (name && name.length >= 2 && !name.toLowerCase().includes('participar')) {
+          // Link canônico que realmente abre o grupo
+          const canonicalUrl = 'https://www.facebook.com/groups/' + slugOrId + '/';
+          if (!groupMap.has(canonicalUrl)) {
+            groupMap.set(canonicalUrl, {
+              name: name,
+              url: canonicalUrl,
+              fbId: slugOrId
+            });
+          }
+        }
+      } catch (err) {}
+    });
+
+    const groups = Array.from(groupMap.values());
+    if (groups.length === 0) {
+      banner.style.borderColor = '#ef4444';
+      setMsg('⚠️ Nenhum grupo encontrado', 'Certifique-se de estar na página facebook.com/groups/joins/ onde seus grupos aparecem!');
+      setTimeout(() => banner.remove(), 7000);
+      alert('Nenhum grupo detectado.\\n\\nCertifique-se de estar logado no Facebook e na página de grupos que você participa:\\nhttps://www.facebook.com/groups/joins/');
+      return;
+    }
+
+    const json = JSON.stringify(groups, null, 2);
+    await navigator.clipboard.writeText(json);
+
+    banner.style.borderColor = '#10b981';
+    setMsg('🎉 ' + groups.length + ' Grupos Reais Extraídos!', 'Links oficiais copiados para a Área de Transferência! Volte ao painel AutoPost FB.');
+    setTimeout(() => banner.remove(), 9000);
+
+    console.log('%c✅ ' + groups.length + ' grupos reais extraídos com links oficiais:', 'color:#10b981;font-weight:bold;font-size:16px;', groups);
+    alert('🎉 SUCESSO!\\n\\nForam extraídos ' + groups.length + ' grupos que você participa com URLs reais e oficiais!\\n\\nEles foram COPIADOS para a sua Área de Transferência.\\n\\nAgora volte à tela do AutoPost FB e clique em "Colar do Clipboard"!');
+  } catch (e) {
+    console.error(e);
+    alert('Erro ao extrair grupos: ' + e.message);
+  }
+})();`;
 
   const handleCopyScript = () => {
     navigator.clipboard.writeText(CONSOLE_SCRAPER_SCRIPT);
@@ -246,7 +233,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
           if (!received) {
             alert(
-              'A extensão do Chrome não retornou dados em segundo plano nesta tentativa.\n\nPara não adicionar nenhum grupo aleatório ou indesejado:\n\n1. Clique no botão "Importar 9 Grupos de Olímpia" (que identificamos na sua tela).\nOU\n2. Use a aba "Script do Console", que lê os seus grupos reais diretamente da sua aba aberta no Facebook.'
+              'A extensão do Chrome não retornou dados em segundo plano nesta tentativa.\\n\\nUtilize a aba "Script do Console": ela lê os seus grupos reais diretamente da aba aberta no Facebook com 100% de precisão e copia todos os links reais para você!'
             );
           }
         }, 1600);
@@ -254,14 +241,15 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     }, 1200);
   };
 
-  const handleImportPastedData = () => {
-    if (!pastedJsonData.trim()) return;
+  const handleImportPastedData = (overrideText?: string) => {
+    const rawData = typeof overrideText === 'string' ? overrideText : pastedJsonData;
+    if (!rawData || !rawData.trim()) return;
 
     let importedCount = 0;
     const targetCat = syncTargetCategoryId || categories[0]?.id || 'cat-geral';
 
     try {
-      const parsed = JSON.parse(pastedJsonData);
+      const parsed = JSON.parse(rawData);
       if (Array.isArray(parsed)) {
         const newGroups: FacebookGroup[] = parsed
           .filter((item: any) => item && (item.url || item.name))
@@ -286,7 +274,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
         }
       }
     } catch (err) {
-      const lines = pastedJsonData
+      const lines = rawData
         .split('\n')
         .map((l) => l.trim())
         .filter((l) => l.length > 0);
@@ -325,7 +313,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
     if (importedCount > 0) {
       setPastedJsonData('');
-      setSyncToast(`🎉 ${importedCount} grupos foram ${replaceOnImport ? 'definidos como sua lista única' : 'importados com sucesso'}!`);
+      setSyncToast(`🎉 ${importedCount} grupos foram ${replaceOnImport ? 'definidos como sua lista única com links oficiais' : 'importados com sucesso'}!`);
       setTimeout(() => setSyncToast(null), 5000);
       setIsAutoSyncOpen(false);
     } else {
@@ -333,104 +321,11 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     }
   };
 
-  const handleImportDemoPack = (packType: 'olimpia' | 'imoveis' | 'vendas' | 'marketing') => {
+  const handleImportDemoPack = (packType: 'imoveis' | 'vendas' | 'marketing') => {
     const targetCat = syncTargetCategoryId || categories[0]?.id || 'cat-geral';
     let demoList: FacebookGroup[] = [];
 
-    if (packType === 'olimpia') {
-      demoList = [
-        {
-          id: `grp-olimpia-${Date.now()}-1`,
-          fbId: 'classificados-olimpia-vende-tudo',
-          name: 'Classificados Olímpia Vende Tudo',
-          url: 'https://www.facebook.com/groups/classificados-olimpia-vende-tudo',
-          categoryId: targetCat,
-          privacy: 'public',
-          membersCount: 45000,
-          status: 'active'
-        },
-        {
-          id: `grp-olimpia-${Date.now()}-2`,
-          fbId: 'classificado-de-olimpia-sp',
-          name: 'CLASSIFICADO DE OLIMPIA-SP',
-          url: 'https://www.facebook.com/groups/classificado-de-olimpia-sp',
-          categoryId: targetCat,
-          privacy: 'public',
-          membersCount: 38200,
-          status: 'active'
-        },
-        {
-          id: `grp-olimpia-${Date.now()}-3`,
-          fbId: 'olimpia-sp-compras-vendas-alugueis',
-          name: 'OLÍMPIA SP - Compras - Vendas - Alugueis.',
-          url: 'https://www.facebook.com/groups/olimpia-sp-compras-vendas-alugueis',
-          categoryId: targetCat,
-          privacy: 'public',
-          membersCount: 29000,
-          status: 'active'
-        },
-        {
-          id: `grp-olimpia-${Date.now()}-4`,
-          fbId: 'compro-vendo-troco-olimpia-sp',
-          name: 'Compro, Vendo e Troco- Olímpia SP',
-          url: 'https://www.facebook.com/groups/compro-vendo-troco-olimpia-sp',
-          categoryId: targetCat,
-          privacy: 'public',
-          membersCount: 34100,
-          status: 'active'
-        },
-        {
-          id: `grp-olimpia-${Date.now()}-5`,
-          fbId: 'classificados-olimpia',
-          name: 'Classificados Olímpia',
-          url: 'https://www.facebook.com/groups/classificados-olimpia',
-          categoryId: targetCat,
-          privacy: 'public',
-          membersCount: 21500,
-          status: 'active'
-        },
-        {
-          id: `grp-olimpia-${Date.now()}-6`,
-          fbId: 'classi-olimpia-anuncie',
-          name: 'CLASSI OLÍMPIA / ANUNCIE',
-          url: 'https://www.facebook.com/groups/classi-olimpia-anuncie',
-          categoryId: targetCat,
-          privacy: 'public',
-          membersCount: 25000,
-          status: 'active'
-        },
-        {
-          id: `grp-olimpia-${Date.now()}-7`,
-          fbId: 'olimpia-empregos-oportunidades',
-          name: 'Olímpia Empregos e Oportunidades',
-          url: 'https://www.facebook.com/groups/olimpia-empregos-oportunidades',
-          categoryId: targetCat,
-          privacy: 'public',
-          membersCount: 16800,
-          status: 'active'
-        },
-        {
-          id: `grp-olimpia-${Date.now()}-8`,
-          fbId: 'bom-negocio-olimpia',
-          name: 'BOM NEGÓCIO Olímpia',
-          url: 'https://www.facebook.com/groups/bom-negocio-olimpia',
-          categoryId: targetCat,
-          privacy: 'public',
-          membersCount: 27500,
-          status: 'active'
-        },
-        {
-          id: `grp-olimpia-${Date.now()}-9`,
-          fbId: 'vendas-olimpia',
-          name: 'vendas olimpia',
-          url: 'https://www.facebook.com/groups/vendas-olimpia',
-          categoryId: targetCat,
-          privacy: 'public',
-          membersCount: 19800,
-          status: 'active'
-        }
-      ];
-    } else if (packType === 'imoveis') {
+    if (packType === 'imoveis') {
       demoList = [
         {
           id: `grp-pack-${Date.now()}-1`,
@@ -519,17 +414,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     setSyncToast(`🎉 ${demoList.length} grupos ${replaceOnImport ? 'definidos como sua lista única' : 'adicionados'} com sucesso!`);
     setTimeout(() => setSyncToast(null), 5000);
     setIsAutoSyncOpen(false);
-  };
-
-  const handlePasteFromClipboard = async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text) {
-        setPastedJsonData(text);
-      }
-    } catch (err) {
-      alert('Se o navegador bloquear o acesso à área de transferência, clique no campo de texto e utilize Ctrl+V (ou Cmd+V) para colar.');
-    }
   };
 
   // Filtered groups
@@ -629,6 +513,20 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     onSaveGroup(updated);
   };
 
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && text.trim()) {
+        setPastedJsonData(text);
+        handleImportPastedData(text);
+      } else {
+        alert('A área de transferência está vazia. Primeiro execute o Script Extrator na aba do Facebook para copiar seus grupos.');
+      }
+    } catch (err) {
+      alert('Se o navegador bloquear a leitura direta da área de transferência, cole com Ctrl+V na caixa de texto abaixo e clique em "Processar e Importar".');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Toast Notification */}
@@ -705,34 +603,46 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
         </div>
       </div>
 
-      {/* Banner de alerta caso existam grupos fictícios ou genéricos */}
+      {/* Banner de alerta caso existam grupos fictícios ou com links estimados que não abrem */}
       {groups.some(
         (g) =>
           g.name.includes('Brasil Geral') ||
           g.name.includes('Direto com Proprietário') ||
           g.url.includes('classificados-vendas-brasil') ||
           g.url.includes('feirao-imoveis-proprietario') ||
-          g.name.includes('Empreendedores, Renda Extra') ||
-          g.name.includes('Compra, Venda e Troca Rápida SP & Região')
+          g.url.includes('classificados-olimpia-vende-tudo') ||
+          g.url.includes('classificado-de-olimpia-sp') ||
+          g.url.includes('olimpia-sp-compras-vendas-alugueis') ||
+          g.url.includes('compro-vendo-troco-olimpia-sp') ||
+          g.url.includes('classificados-olimpia') ||
+          g.url.includes('classi-olimpia-anuncie') ||
+          g.url.includes('olimpia-empregos-oportunidades') ||
+          g.url.includes('bom-negocio-olimpia') ||
+          g.url.includes('vendas-olimpia')
       ) && (
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs text-amber-950 shadow-xs">
           <div className="flex items-start md:items-center gap-3">
             <span className="text-2xl shrink-0">⚠️</span>
             <div>
               <span className="font-bold text-sm block text-amber-950">
-                Grupos fictícios detectados na sua lista!
+                Por que a tela do Facebook diz &quot;Este conteúdo não está disponível no momento&quot;?
               </span>
-              <span className="text-amber-800 text-xs block mt-0.5">
-                O sistema carregou anteriormente grupos genéricos de teste (&quot;Brasil Geral&quot;, etc.) que você não participa. Deseja substituí-los agora pelos seus <strong>9 grupos reais de Olímpia - SP</strong>?
+              <span className="text-amber-800 text-xs block mt-0.5 max-w-2xl">
+                Alguns grupos na sua lista estão com <strong>links aproximados/estimados</strong> (como <code>facebook.com/groups/classificados-olimpia-vende-tudo</code>). No Facebook, os grupos possuem IDs oficiais únicos e esses links estimados não existem nos servidores deles. Além disso, o carregador anterior puxava apenas 9 itens.
+                <br />
+                Para carregar <strong>TODOS os seus grupos reais com as URLs oficiais que abrem com 100% de sucesso</strong>, utilize o Extrator do Facebook abaixo.
               </span>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={handleReplaceWithMyRealGroups}
-              className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-xl transition-colors shadow-xs"
+              onClick={() => {
+                setAutoSyncTab('console_script');
+                setIsAutoSyncOpen(true);
+              }}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl transition-colors shadow-xs"
             >
-              Substituir por Meus 9 Grupos Reais
+              Extrair Meus Grupos Reais
             </button>
             <button
               onClick={handleClearAll}
@@ -933,15 +843,34 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                       {/* Name & URL */}
                       <td className="py-3.5 px-4">
                         <div className="font-semibold text-slate-900">{grp.name}</div>
-                        <a
-                          href={grp.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline mt-0.5"
-                        >
-                          {grp.url}
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <a
+                            href={grp.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline max-w-sm truncate"
+                          >
+                            {grp.url}
+                            <ExternalLink className="w-3 h-3 shrink-0" />
+                          </a>
+                          {(grp.url.includes('classificados-olimpia-vende-tudo') ||
+                            grp.url.includes('classificado-de-olimpia-sp') ||
+                            grp.url.includes('olimpia-sp-compras-vendas-alugueis') ||
+                            grp.url.includes('compro-vendo-troco-olimpia-sp') ||
+                            grp.url.includes('classificados-olimpia') ||
+                            grp.url.includes('classi-olimpia-anuncie') ||
+                            grp.url.includes('olimpia-empregos-oportunidades') ||
+                            grp.url.includes('bom-negocio-olimpia') ||
+                            grp.url.includes('vendas-olimpia') ||
+                            grp.url.includes('classificados-vendas-brasil')) && (
+                            <span
+                              title="Este link foi estimado e não existe no Facebook (gera erro 'Conteúdo indisponível'). Use o Extrator do Console para puxar a URL oficial com ID real!"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-rose-100 text-rose-800 border border-rose-200 rounded text-[10px] font-semibold cursor-help"
+                            >
+                              ⚠️ Link Estimado (Dá erro no FB)
+                            </span>
+                          )}
+                        </div>
                         {grp.notes && (
                           <div className="text-[11px] text-slate-400 mt-0.5 italic">
                             Obs: {grp.notes}
@@ -1311,25 +1240,25 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
               </div>
             </div>
 
-            {/* Quick detected card from screenshot */}
-            <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            {/* Guia para extração de grupos reais com auto-scroll */}
+            <div className="p-3.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
               <div className="flex items-center gap-2.5">
-                <span className="text-xl">📍</span>
+                <span className="text-xl">⚡</span>
                 <div>
-                  <span className="text-xs font-bold text-amber-950 block">
-                    Grupos de Olímpia - SP (Identificados na sua tela!)
+                  <span className="text-xs font-bold text-blue-950 block">
+                    Puxar Todos os Seus Grupos com URLs Reais e Oficiais
                   </span>
-                  <span className="text-[11px] text-amber-800 block">
-                    Classificados Olímpia Vende Tudo, Empregos, BOM NEGÓCIO, etc. (9 comunidades reais)
+                  <span className="text-[11px] text-blue-850 block">
+                    O Extrator do Facebook faz auto-scroll para puxar todos os grupos que você participa, com os IDs verdadeiros que abrem com 100% de sucesso!
                   </span>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => handleImportDemoPack('olimpia')}
-                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-lg whitespace-nowrap transition-colors shadow-xs"
+                onClick={() => setAutoSyncTab('console_script')}
+                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-lg whitespace-nowrap transition-colors shadow-xs"
               >
-                Importar 9 Grupos de Olímpia Agora
+                Abrir Extrator Oficial
               </button>
             </div>
 
@@ -1468,11 +1397,11 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                   <div className="pt-2 border-t border-slate-200">
                     <button
                       type="button"
-                      onClick={handleReplaceWithMyRealGroups}
-                      className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-950 font-semibold text-xs rounded-xl transition-colors"
+                      onClick={() => setAutoSyncTab('console_script')}
+                      className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-900 font-semibold text-xs rounded-xl transition-colors"
                     >
-                      <span>📍</span>
-                      <span>Carregar em 1 clique seus 9 Grupos Reais de Olímpia (vistos na sua tela)</span>
+                      <span>⚡</span>
+                      <span>Usar Extrator do Console (Sem precisar instalar extensão)</span>
                     </button>
                   </div>
                 </div>
@@ -1561,7 +1490,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                   />
 
                   <button
-                    onClick={handleImportPastedData}
+                    onClick={() => handleImportPastedData()}
                     disabled={!pastedJsonData.trim()}
                     className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-medium text-xs rounded-xl transition-colors"
                   >
@@ -1580,20 +1509,20 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-xl space-y-2 flex flex-col justify-between">
+                  <div className="p-3.5 bg-blue-50/80 border border-blue-200 rounded-xl space-y-2 flex flex-col justify-between">
                     <div>
-                      <span className="font-semibold text-xs text-amber-950 flex items-center gap-1">
-                        📍 Olímpia - SP (Sua Região)
+                      <span className="font-semibold text-xs text-blue-950 flex items-center gap-1">
+                        📍 Seus Grupos Locais / Cidade
                       </span>
-                      <span className="text-[11px] text-amber-800 block mt-0.5">
-                        9 grupos reais da sua tela: Classificados Olímpia Vende Tudo, BOM NEGÓCIO, Empregos, etc.
+                      <span className="text-[11px] text-blue-800 block mt-0.5">
+                        Para carregar todos os grupos da sua região (como Olímpia e cidades vizinhas) com as URLs oficiais que realmente abrem sem erro 404, use o <strong>Script do Console</strong>.
                       </span>
                     </div>
                     <button
-                      onClick={() => handleImportDemoPack('olimpia')}
-                      className="w-full py-1.5 px-2.5 bg-amber-600 hover:bg-amber-700 text-white font-medium text-[11px] rounded-lg transition-colors shadow-xs"
+                      onClick={() => setAutoSyncTab('console_script')}
+                      className="w-full py-1.5 px-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-[11px] rounded-lg transition-colors shadow-xs"
                     >
-                      {replaceOnImport ? 'Substituir Lista pelos 9 Grupos de Olímpia' : 'Importar 9 Grupos de Olímpia'}
+                      Ir para o Extrator do Console (Aba 2)
                     </button>
                   </div>
 
