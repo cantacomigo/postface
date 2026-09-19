@@ -48,7 +48,7 @@ export async function downloadExtensionZip(): Promise<void> {
   const MANIFEST_V3_JSON = `{
   "manifest_version": 3,
   "name": "AutoPost FB - Extensão Anti-Ban (Robô Autônomo)",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "Automação 100% autônoma de postagens em grupos do Facebook operando na sessão ativa do navegador com motor de proteção anti-bloqueio.",
   "permissions": [
     "tabs",
@@ -491,21 +491,108 @@ async function findAndClickComposerTrigger() {
 
 async function findEditorArea() {
   const startTime = Date.now();
-  const maxWaitMs = 15000;
+  const maxWaitMs = 20000;
 
   while (Date.now() - startTime < maxWaitMs) {
-    const dialog = document.querySelector('div[role="dialog"]');
-    const root = dialog || document;
+    // 1. Identifica todos os diálogos/modais abertos no Facebook
+    const allDialogs = Array.from(document.querySelectorAll('div[role="dialog"], [aria-modal="true"]'));
 
-    const editor = root.querySelector('div[role="textbox"][contenteditable="true"]') ||
-                   root.querySelector('div[data-lexical-editor="true"]') ||
-                   root.querySelector('div[contenteditable="true"][tabindex="0"]') ||
-                   root.querySelector('div[contenteditable="true"]');
+    // Filtra pelo modal correto de criação de post (excluindo chats de messenger e notificações)
+    let targetDialog = allDialogs.find(d => {
+      const text = (d.innerText || d.textContent || '').toLowerCase();
+      return (
+        text.includes('criar post') ||
+        text.includes('crie um post') ||
+        text.includes('criar publicação') ||
+        text.includes('postar anonimamente') ||
+        text.includes('adicionar ao post') ||
+        text.includes('postar') ||
+        text.includes('publicar')
+      ) && d.offsetWidth > 0 && d.offsetHeight > 0;
+    }) || allDialogs[allDialogs.length - 1] || null;
 
-    if (editor) {
-      editor.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      return editor;
+    // Escopos de busca ordenados por prioridade
+    const candidateRoots = [];
+    if (targetDialog) candidateRoots.push(targetDialog);
+    for (const d of allDialogs) {
+      if (d !== targetDialog && d.offsetWidth > 0 && d.offsetHeight > 0) candidateRoots.push(d);
     }
+    candidateRoots.push(document);
+
+    for (const root of candidateRoots) {
+      // A. Seletores diretos de editor Lexical / contenteditable do Facebook
+      const directSelectors = [
+        '[aria-label*="Crie um post" i]',
+        '[aria-label*="post público" i]',
+        '[aria-label*="Criar post" i]',
+        '[aria-label*="Escreva algo" i]',
+        '[aria-label*="No que você está pensando" i]',
+        '[aria-label*="Create a public post" i]',
+        '[aria-label*="Write something" i]',
+        '[aria-label*="What\'s on your mind" i]',
+        'div[role="textbox"][contenteditable="true"]',
+        '[contenteditable="true"][role="textbox"]',
+        'div[data-lexical-editor="true"]',
+        '[data-lexical-editor="true"]',
+        'div[contenteditable="true"]',
+        '[contenteditable="true"]',
+        'div[role="textbox"]'
+      ];
+
+      for (const sel of directSelectors) {
+        const found = root.querySelector(sel);
+        if (found && found.offsetWidth > 0 && found.offsetHeight > 0) {
+          // Garante que não é a barra de pesquisa do cabeçalho nem um botão
+          if (!found.closest('header') && found.getAttribute('role') !== 'button' && found.getAttribute('role') !== 'searchbox') {
+            found.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            found.focus();
+            return found;
+          }
+        }
+      }
+
+      // B. Se ainda não achou por seletor direto, localiza o texto do placeholder (ex: "Crie um post público...") e clica nele para ativar o editor
+      const placeholderKeywords = [
+        'crie um post público',
+        'crie um post',
+        'escreva algo',
+        'no que você está pensando',
+        'crie uma publicação'
+      ];
+
+      const allElements = Array.from(root.querySelectorAll('span, div, p, label'));
+      for (const el of allElements) {
+        const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+        if (placeholderKeywords.some(k => txt === k || txt.startsWith(k))) {
+          simulateUserClick(el);
+          await sleep(300);
+
+          if (document.activeElement && (
+            document.activeElement.getAttribute('contenteditable') === 'true' ||
+            document.activeElement.getAttribute('role') === 'textbox'
+          )) {
+            return document.activeElement;
+          }
+
+          const nearbyEditor = el.closest('div[role="textbox"], div[contenteditable="true"]') ||
+                               el.parentElement?.querySelector('[contenteditable="true"], [role="textbox"]') ||
+                               root.querySelector('[contenteditable="true"], [role="textbox"]');
+          if (nearbyEditor) {
+            nearbyEditor.focus();
+            return nearbyEditor;
+          }
+        }
+      }
+    }
+
+    // C. Fallback: elemento ativo no momento
+    if (document.activeElement && (
+      document.activeElement.getAttribute('contenteditable') === 'true' ||
+      document.activeElement.getAttribute('role') === 'textbox'
+    )) {
+      return document.activeElement;
+    }
+
     await sleep(400);
   }
   return null;
@@ -516,12 +603,35 @@ async function insertTextIntoEditor(element, text) {
 
   element.focus();
   simulateUserClick(element);
-  await sleep(400);
+  await sleep(300);
 
-  // Seleciona tudo e limpa
-  document.execCommand('selectAll', false, null);
+  // Posiciona o cursor no editor
+  try {
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (e) {}
 
-  // Método 1: execCommand('insertText')
+  // Seleciona tudo e limpa caso tenha resquício
+  try {
+    document.execCommand('selectAll', false, null);
+  } catch (e) {}
+
+  // Método 1: beforeinput Event
+  try {
+    const inputEvent = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertText',
+      data: text
+    });
+    element.dispatchEvent(inputEvent);
+  } catch (e) {}
+
+  // Método 2: execCommand('insertText')
   let execSuccess = false;
   try {
     execSuccess = document.execCommand('insertText', false, text);
@@ -529,7 +639,7 @@ async function insertTextIntoEditor(element, text) {
     execSuccess = false;
   }
 
-  // Método 2: Simulação de Paste com ClipboardEvent e DataTransfer
+  // Método 3: Simulação de Paste com ClipboardEvent e DataTransfer
   const currentText = (element.innerText || element.textContent || '').trim();
   if (!execSuccess || currentText.length < 5) {
     try {
@@ -542,36 +652,25 @@ async function insertTextIntoEditor(element, text) {
       });
       element.dispatchEvent(pasteEvent);
     } catch (e) {
-      console.warn('Paste event failed:', e);
+      console.warn('Paste event fallback:', e);
     }
   }
 
-  // Método 3: InputEvent
-  const afterPasteText = (element.innerText || element.textContent || '').trim();
-  if (afterPasteText.length < 5) {
-    try {
-      const inputEvent = new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'insertText',
-        data: text
-      });
-      element.dispatchEvent(inputEvent);
-    } catch (e) {}
+  // Método 4: Fallback se ainda nada preencheu
+  if (!(element.innerText || element.textContent || '').trim()) {
+    element.innerHTML = '<p class="xdj266r x11i5rnm xat24cr x1mh8g0r x16tdsg8"><span data-lexical-text="true">' + (text || '') + '</span></p>';
   }
 
-  // Fallback se nada preencheu
-  if (!(element.innerText || element.textContent || '').trim()) {
-    element.innerText = text;
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
-  }
+  // Dispara eventos de atualização do React / DOM
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+  element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
 
   // Desperta observadores do Lexical do Facebook digitando um espaço e apagando
   try {
     element.focus();
     document.execCommand('insertText', false, ' ');
-    await sleep(100);
+    await sleep(80);
     document.execCommand('delete', false, null);
   } catch (e) {}
 
@@ -579,49 +678,81 @@ async function insertTextIntoEditor(element, text) {
 }
 
 async function findAndClickSubmitButton() {
-  showStatusBanner('Localizando botão "Publicar"...', 'info');
+  showStatusBanner('Localizando botão "Postar / Publicar"...', 'info');
 
   const startTime = Date.now();
   const maxWaitMs = 20000;
 
   while (Date.now() - startTime < maxWaitMs) {
-    const dialog = document.querySelector('div[role="dialog"]') || document;
+    // Busca em todos os diálogos e no documento
+    const allDialogs = Array.from(document.querySelectorAll('div[role="dialog"], [aria-modal="true"]'));
+    let activeDialog = allDialogs.find(d => {
+      const txt = (d.innerText || d.textContent || '').toLowerCase();
+      return (txt.includes('criar post') || txt.includes('postar') || txt.includes('publicar')) &&
+             d.offsetWidth > 0 && d.offsetHeight > 0;
+    }) || allDialogs[allDialogs.length - 1] || null;
 
-    const allButtons = Array.from(dialog.querySelectorAll('[role="button"], button'));
+    const candidateRoots = [];
+    if (activeDialog) candidateRoots.push(activeDialog);
+    candidateRoots.push(document);
+
     let submitBtn = null;
+    const submitKeywords = [
+      'postar',
+      'publicar',
+      'post',
+      'postar no grupo',
+      'publicar no grupo',
+      'compartilhar',
+      'concluir',
+      'avançar'
+    ];
 
-    const submitKeywords = ['publicar', 'post', 'publicar no grupo', 'compartilhar', 'concluir', 'avançar'];
-    for (const b of allButtons) {
-      const txt = (b.innerText || b.textContent || '').trim().toLowerCase();
-      const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
-      if (submitKeywords.some(k => txt === k || aria === k || txt.startsWith(k) || aria.startsWith(k))) {
-        submitBtn = b;
-        break;
+    for (const root of candidateRoots) {
+      const allButtons = Array.from(root.querySelectorAll('[role="button"], button'));
+      for (const b of allButtons) {
+        const txt = (b.innerText || b.textContent || '').trim().toLowerCase();
+        const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+        if (submitKeywords.some(k => txt === k || aria === k || txt.startsWith(k) || aria.startsWith(k))) {
+          submitBtn = b;
+          break;
+        }
       }
-    }
 
-    if (!submitBtn) {
-      submitBtn = dialog.querySelector('[aria-label="Publicar"], [aria-label="Post"], [aria-label*="Publicar" i], [aria-label*="Post" i]');
+      if (!submitBtn) {
+        submitBtn = root.querySelector(
+          '[aria-label="Postar"], [aria-label="Publicar"], [aria-label="Post"], [aria-label*="Postar" i], [aria-label*="Publicar" i], [aria-label*="Post" i]'
+        );
+      }
+
+      if (submitBtn) break;
     }
 
     if (submitBtn) {
-      const isDisabled = submitBtn.getAttribute('aria-disabled') === 'true' || submitBtn.disabled;
+      const isDisabled = submitBtn.getAttribute('aria-disabled') === 'true' ||
+                         submitBtn.disabled === true ||
+                         submitBtn.getAttribute('tabindex') === '-1';
+
       if (!isDisabled) {
-        showStatusBanner('Acionando botão "Publicar"...', 'info');
+        showStatusBanner('Acionando botão "Postar" no Facebook...', 'info');
         submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
         await sleep(500);
         simulateUserClick(submitBtn);
-        console.log('[AutoPost FB] Botão "Publicar" acionado com sucesso!');
+        console.log('[AutoPost FB] Botão "Postar/Publicar" acionado com sucesso!');
         return true;
       } else {
-        showStatusBanner('Aguardando Facebook validar e habilitar botão "Publicar"...', 'info');
-        const ed = dialog.querySelector('div[role="textbox"]');
+        showStatusBanner('Aguardando Facebook habilitar botão "Postar"...', 'info');
+        // Acorda o editor para o Facebook detectar que há texto digitado
+        const ed = document.querySelector('div[role="dialog"] [contenteditable="true"]') ||
+                   document.querySelector('div[role="dialog"] [role="textbox"]') ||
+                   document.querySelector('[contenteditable="true"]');
         if (ed) {
           try {
             ed.focus();
             document.execCommand('insertText', false, ' ');
-            await sleep(50);
+            await sleep(60);
             document.execCommand('delete', false, null);
+            ed.dispatchEvent(new Event('input', { bubbles: true }));
           } catch (e) {}
         }
       }
@@ -1218,7 +1349,7 @@ h1 { font-size: 15px; font-weight: 700; color: #fff; }
 
   // 9. LEIA-ME TEXTO
   const README_TXT = `=====================================================
-AutoPost FB - Extensão Anti-Ban v2.5 (Google Chrome)
+AutoPost FB - Extensão Anti-Ban v2.6 (Google Chrome)
 MODO 100% AUTÔNOMO COM HUD VISUAL EM TEMPO REAL
 =====================================================
 
@@ -1236,7 +1367,7 @@ COMO INSTALAR NO SEU GOOGLE CHROME (3 PASSOS RÁPIDOS):
 3. CARREGUE OU ATUALIZE A EXTENSÃO:
    - Se já tinha a versão anterior: remova-a ou clique no ícone de "Atualizar" (círculo com seta).
    - Para instalar: clique em "Carregar sem compactação" e selecione a pasta descompactada.
-   - Pronto! A versão 2.5 estará ativa no seu Chrome.
+   - Pronto! A versão 2.6 estará ativa no seu Chrome.
 
 REQUISITOS IMPORTANTES:
 - Mantenha o Facebook logado na sua conta no Google Chrome.
@@ -1269,7 +1400,7 @@ REQUISITOS IMPORTANTES:
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'autopost-fb-extensao-v2.5.zip';
+  a.download = 'autopost-fb-extensao-v2.6.zip';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
