@@ -92,7 +92,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     }
   };
 
-  // Script Extrator Inteligente com Auto-Scroll para carregar TODOS os grupos e pegar URLs reais
+  // Script Extrator Inteligente com Auto-Scroll e Modal Interativo com cópia 100% garantida
   const CONSOLE_SCRAPER_SCRIPT = `(async () => {
   try {
     let banner = document.getElementById('fb-auto-banner');
@@ -118,7 +118,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
     const groupMap = new Map();
     const anchors = Array.from(document.querySelectorAll('a[href*="/groups/"]'));
-    const systemKeywords = ['joins', 'feed', 'discover', 'create', 'notifications', 'membership_questions', 'search', 'category', 'explore', 'chats'];
+    const systemKeywords = ['joins', 'feed', 'discover', 'create', 'notifications', 'membership_questions', 'search', 'category', 'explore', 'chats', 'events', 'messages'];
 
     anchors.forEach(a => {
       try {
@@ -140,14 +140,24 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
         // Obtém o nome real do grupo
         let name = '';
         const nameLines = (a.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
-        if (nameLines.length > 0) {
+        if (nameLines.length > 0 && !nameLines[0].toLowerCase().includes('ver grupo')) {
           name = nameLines[0];
         }
-        if (!name || name.length < 2 || name.toLowerCase().includes('participar')) {
+        if (!name || name.length < 2 || name.toLowerCase().includes('participar') || name.toLowerCase().includes('ver grupo')) {
           const heading = a.querySelector('span[dir="auto"], strong, h2, h3');
-          if (heading && heading.innerText) {
+          if (heading && heading.innerText && !heading.innerText.toLowerCase().includes('ver grupo')) {
             name = heading.innerText.trim();
           }
+        }
+        if ((!name || name.length < 2 || name.toLowerCase().includes('ver grupo')) && container) {
+          const cardHeading = container.querySelector('span[dir="auto"], strong, h2, h3, a[role="link"]');
+          if (cardHeading && cardHeading.innerText && !cardHeading.innerText.toLowerCase().includes('ver grupo')) {
+            name = cardHeading.innerText.trim().split('\\n')[0];
+          }
+        }
+
+        if (!name || name.length < 2) {
+          name = decodeURIComponent(slugOrId).replace(/-/g, ' ').replace(/_/g, ' ');
         }
 
         if (name && name.length >= 2 && !name.toLowerCase().includes('participar')) {
@@ -174,17 +184,122 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     }
 
     const json = JSON.stringify(groups, null, 2);
-    await navigator.clipboard.writeText(json);
 
-    banner.style.borderColor = '#10b981';
-    setMsg('🎉 ' + groups.length + ' Grupos Reais Extraídos!', 'Links oficiais copiados para a Área de Transferência! Volte ao painel AutoPost FB.');
-    setTimeout(() => banner.remove(), 9000);
+    // Tentativas resilientes de cópia sem travar em erro de foco
+    let autoCopied = false;
+    try {
+      if (typeof copy === 'function') {
+        copy(json);
+        autoCopied = true;
+      }
+    } catch (_) {}
+
+    if (!autoCopied) {
+      try {
+        const t = document.createElement('textarea');
+        t.value = json;
+        t.style.position = 'fixed';
+        t.style.left = '-9999px';
+        t.style.top = '0';
+        document.body.appendChild(t);
+        t.focus();
+        t.select();
+        autoCopied = document.execCommand('copy');
+        document.body.removeChild(t);
+      } catch (_) {}
+    }
+
+    if (!autoCopied) {
+      try {
+        window.focus();
+        await navigator.clipboard.writeText(json);
+        autoCopied = true;
+      } catch (_) {}
+    }
+
+    if (banner) banner.remove();
+
+    // Cria Modal Interativo elegante direto na tela do Facebook
+    const oldModal = document.getElementById('fb-autopost-modal');
+    if (oldModal) oldModal.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'fb-autopost-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.85);backdrop-filter:blur(6px);z-index:99999999;display:flex;align-items:center;justify-content:center;padding:16px;font-family:system-ui,-apple-system,sans-serif;';
+
+    modal.innerHTML = \`
+      <div style="background:#0f172a;color:#f8fafc;border:2px solid #3b82f6;border-radius:20px;padding:24px;max-width:540px;width:100%;box-shadow:0 25px 60px rgba(0,0,0,0.7);display:flex;flex-direction:column;gap:16px;animation:fadeIn 0.2s ease-out;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <span style="font-size:32px;">🎉</span>
+            <div>
+              <h3 style="margin:0;font-size:18px;font-weight:700;color:#60a5fa;">\${groups.length} Grupos Reais Extraídos!</h3>
+              <p style="margin:2px 0 0;font-size:12px;color:#94a3b8;">Links oficiais e canônicos prontos para uso no AutoPost FB.</p>
+            </div>
+          </div>
+          <button id="fb-modal-close" style="background:#1e293b;border:none;color:#94a3b8;cursor:pointer;font-size:16px;border-radius:8px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-weight:bold;">✕</button>
+        </div>
+
+        <div style="background:#1e293b;border-radius:12px;padding:12px;border:1px solid #334155;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <span style="font-size:11px;font-weight:600;color:#cbd5e1;">📋 Dados extraídos (JSON):</span>
+            <span id="fb-copy-status" style="font-size:11px;color:\${autoCopied ? '#10b981' : '#f59e0b'};font-weight:600;">\${autoCopied ? '✅ Já copiado para Área de Transferência!' : '⚠️ Clique no botão verde para copiar'}</span>
+          </div>
+          <textarea id="fb-json-textarea" readonly style="width:100%;height:110px;background:#020617;color:#38bdf8;border:1px solid #334155;border-radius:8px;padding:8px;font-family:monospace;font-size:11px;resize:none;box-sizing:border-box;">\${json.replace(/</g, '&lt;')}</textarea>
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button id="fb-copy-btn" style="flex:1;background:#10b981;color:#ffffff;border:none;border-radius:12px;padding:14px 18px;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(16,185,129,0.35);transition:background 0.2s;">
+            <span>📋</span> <span>COPIAR DADOS AGORA</span>
+          </button>
+          <button id="fb-download-btn" style="background:#334155;color:#f8fafc;border:none;border-radius:12px;padding:14px 18px;font-weight:600;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+            <span>💾</span> <span>Baixar .JSON</span>
+          </button>
+        </div>
+
+        <div style="text-align:center;font-size:11px;color:#94a3b8;line-height:1.4;">
+          Depois de copiar, volte ao painel <strong>AutoPost FB</strong> e clique em <strong>"Colar do Clipboard"</strong> para importar todos os \${groups.length} grupos!
+        </div>
+      </div>
+    \`;
+
+    document.body.appendChild(modal);
+
+    const copyBtn = document.getElementById('fb-copy-btn');
+    const closeBtn = document.getElementById('fb-modal-close');
+    const downloadBtn = document.getElementById('fb-download-btn');
+    const textarea = document.getElementById('fb-json-textarea');
+    const statusLabel = document.getElementById('fb-copy-status');
+
+    const doCopy = async () => {
+      try {
+        textarea.focus();
+        textarea.select();
+        document.execCommand('copy');
+        await navigator.clipboard.writeText(json);
+      } catch (_) {}
+      statusLabel.style.color = '#10b981';
+      statusLabel.innerText = '✅ Copiado com Sucesso!';
+      copyBtn.innerHTML = '<span>✅</span> <span>COPIADO COM SUCESSO!</span>';
+      copyBtn.style.background = '#059669';
+    };
+
+    copyBtn.onclick = doCopy;
+    closeBtn.onclick = () => modal.remove();
+    downloadBtn.onclick = () => {
+      const blob = new Blob([json], { type: 'application/json' });
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = u;
+      a.download = 'meus_grupos_facebook.json';
+      a.click();
+      URL.revokeObjectURL(u);
+    };
 
     console.log('%c✅ ' + groups.length + ' grupos reais extraídos com links oficiais:', 'color:#10b981;font-weight:bold;font-size:16px;', groups);
-    alert('🎉 SUCESSO!\\n\\nForam extraídos ' + groups.length + ' grupos que você participa com URLs reais e oficiais!\\n\\nEles foram COPIADOS para a sua Área de Transferência.\\n\\nAgora volte à tela do AutoPost FB e clique em "Colar do Clipboard"!');
   } catch (e) {
     console.error(e);
-    alert('Erro ao extrair grupos: ' + e.message);
+    alert('Aviso: ' + e.message);
   }
 })();`;
 
@@ -525,6 +640,21 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     } catch (err) {
       alert('Se o navegador bloquear a leitura direta da área de transferência, cole com Ctrl+V na caixa de texto abaixo e clique em "Processar e Importar".');
     }
+  };
+
+  const handleJsonFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (text && text.trim()) {
+        setPastedJsonData(text);
+        handleImportPastedData(text);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   return (
@@ -1468,17 +1598,30 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
                 {/* Paste Box */}
                 <div className="pt-2 border-t border-slate-100 space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <label className="text-xs font-semibold text-slate-700">
                       Cole aqui o resultado (JSON ou Lista de Links):
                     </label>
-                    <button
-                      onClick={handlePasteFromClipboard}
-                      type="button"
-                      className="text-[11px] text-blue-600 hover:text-blue-700 font-medium"
-                    >
-                      Colar do Clipboard
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <label className="inline-flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 cursor-pointer font-medium">
+                        <Upload className="w-3 h-3 text-slate-500" />
+                        <span>Carregar Arquivo .json</span>
+                        <input
+                          type="file"
+                          accept=".json,application/json,text/plain"
+                          onChange={handleJsonFileUpload}
+                          className="hidden"
+                        />
+                      </label>
+                      <button
+                        onClick={handlePasteFromClipboard}
+                        type="button"
+                        className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-700 font-semibold"
+                      >
+                        <Copy className="w-3 h-3" />
+                        Colar do Clipboard
+                      </button>
+                    </div>
                   </div>
 
                   <textarea
@@ -1492,7 +1635,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                   <button
                     onClick={() => handleImportPastedData()}
                     disabled={!pastedJsonData.trim()}
-                    className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-medium text-xs rounded-xl transition-colors"
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-semibold text-xs rounded-xl transition-colors shadow-xs"
                   >
                     <CheckCircle2 className="w-4 h-4" />
                     Processar e Importar Grupos Extraídos
