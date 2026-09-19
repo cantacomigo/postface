@@ -1,5 +1,6 @@
-import React from 'react';
-import { ShieldCheck, Layers, PlayCircle, FolderKanban, BarChart3, Code2, Globe, Laptop } from 'lucide-react';
+import React, { useState } from 'react';
+import { ShieldCheck, Layers, PlayCircle, FolderKanban, BarChart3, Code2, Globe, Laptop, Download, Check } from 'lucide-react';
+import { downloadExtensionZip } from '../utils/extensionPackage';
 
 interface HeaderProps {
   activeTab: 'campaign' | 'templates' | 'groups' | 'reports' | 'architecture' | 'extension_popup';
@@ -14,6 +15,21 @@ export const Header: React.FC<HeaderProps> = ({
   isRunning,
   totalLogs
 }) => {
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [zipDownloaded, setZipDownloaded] = useState(false);
+
+  const handleDownloadZip = async () => {
+    try {
+      setDownloadingZip(true);
+      await downloadExtensionZip();
+      setZipDownloaded(true);
+      setTimeout(() => setZipDownloaded(false), 3000);
+    } catch (err) {
+      console.error('Falha ao baixar zip da extensão:', err);
+    } finally {
+      setDownloadingZip(false);
+    }
+  };
   return (
     <header className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -38,16 +54,30 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Session Status & Security indicators */}
-          <div className="flex items-center gap-2.5 text-xs">
+          <div className="flex items-center gap-2.5 text-xs flex-wrap justify-end">
+            <button
+              onClick={handleDownloadZip}
+              disabled={downloadingZip}
+              className="flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition-all cursor-pointer"
+              title="Baixar pacote pronto da Extensão Manifest V3 para instalar no Google Chrome"
+            >
+              {zipDownloaded ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Extensão Baixada!</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{downloadingZip ? 'Gerando ZIP...' : 'Baixar Extensão (.ZIP)'}</span>
+                </>
+              )}
+            </button>
+
             <div className="hidden sm:flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300">
               <Globe className="w-3.5 h-3.5 text-blue-400" />
-              <span>Sessão: <strong className="text-slate-100">Aba FB Conectada</strong></span>
+              <span>Modo: <strong className="text-slate-100">Assistente Direto</strong></span>
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            </div>
-
-            <div className="flex items-center gap-1.5 bg-blue-950/60 text-blue-300 px-3 py-1.5 rounded-lg border border-blue-800/40">
-              <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
-              <span className="font-medium">Zero-Login Storage</span>
             </div>
 
             {isRunning && (

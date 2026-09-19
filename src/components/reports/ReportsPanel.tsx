@@ -295,17 +295,24 @@ export const ReportsPanel: React.FC<ReportsPanelProps> = ({
                             <Eye className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {log.postUrl && (
-                          <a
-                            href={log.postUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-[11px] font-medium"
-                          >
-                            Ver Post
-                            <ExternalLink className="w-3 h-3" />
-                          </a>
-                        )}
+                        {(() => {
+                          const targetUrl = log.postUrl && log.postUrl.includes('/posts/') && log.postUrl.match(/\/posts\/\d{8,}/)
+                            ? log.postUrl.replace(/\/posts\/\d+.*$/, '')
+                            : (log.postUrl || (log.groupId ? `https://www.facebook.com/groups/${log.groupId}` : 'https://www.facebook.com/groups/'));
+                          
+                          return (
+                            <a
+                              href={targetUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-semibold transition-colors"
+                              title="Abrir o grupo no Facebook para conferir a publicação"
+                            >
+                              Abrir Grupo
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          );
+                        })()}
                       </div>
                     </td>
                   </tr>

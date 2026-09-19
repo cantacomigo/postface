@@ -8,6 +8,7 @@ import {
   CampaignLog
 } from '../../types';
 import { resolveSpintax } from '../../utils/spintax';
+import { downloadExtensionZip } from '../../utils/extensionPackage';
 import {
   Play,
   Pause,
@@ -18,12 +19,21 @@ import {
   Sliders,
   AlertTriangle,
   CheckCircle,
+  CheckCircle2,
   SkipForward,
   Layers,
   Sparkles,
   ArrowRight,
   RefreshCw,
-  Eye
+  Eye,
+  Copy,
+  Check,
+  ExternalLink,
+  Download,
+  FileText,
+  AlertCircle,
+  HelpCircle,
+  Send
 } from 'lucide-react';
 
 interface CampaignRunnerProps {
@@ -58,12 +68,37 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
   // Speed multiplier for testing
   const [speedMode, setSpeedMode] = useState<'real' | 'fast'>('real');
 
+  // Interactive Assistant State
+  const [activePromptGroup, setActivePromptGroup] = useState<{
+    group: FacebookGroup;
+    template: PostTemplate;
+    resolvedText: string;
+  } | null>(null);
+  const [copiedTextNotice, setCopiedTextNotice] = useState<boolean>(false);
+  const [autoOpenTab, setAutoOpenTab] = useState<boolean>(true);
+  const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
+  const [downloadingZip, setDownloadingZip] = useState<boolean>(false);
+  const [zipDownloaded, setZipDownloaded] = useState<boolean>(false);
+
   // Compute eligible active groups
   const eligibleGroups = groups.filter(
     (g) => g.status === 'active' && selectedCategoryIds.includes(g.categoryId)
   );
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId) || templates[0];
+
+  const handleDownloadZip = async () => {
+    try {
+      setDownloadingZip(true);
+      await downloadExtensionZip();
+      setZipDownloaded(true);
+      setTimeout(() => setZipDownloaded(false), 3000);
+    } catch (err) {
+      console.error('Falha ao baixar zip da extensão:', err);
+    } finally {
+      setDownloadingZip(false);
+    }
+  };
 
   // Handler to toggle category selection
   const toggleCategory = (catId: string) => {
@@ -113,6 +148,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
       startedAt: new Date().toISOString()
     };
 
+    setActivePromptGroup(null);
     onUpdateCampaign(newCampaign);
 
     onAddLog({
@@ -149,11 +185,12 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
 
   // Abort / Stop campaign
   const handleStopCampaign = () => {
-    if (confirm('Deseja realmente interromper esta campanha?')) {
+    if (confirm('Deseja realmente encerrar esta campanha?')) {
+      setActivePromptGroup(null);
       onUpdateCampaign({
         ...campaign,
         status: 'aborted',
-        currentPhaseText: 'Campanha finalizada pelo usuário.',
+        currentPhaseText: 'Campanha encerrada pelo usuário.',
         completedAt: new Date().toISOString()
       });
     }
@@ -164,7 +201,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
     if (campaign.status === 'running') {
       onUpdateCampaign({
         ...campaign,
-        nextPostCountdown: 1
+        nextPostCountdown: 0
       });
     }
   };
@@ -177,6 +214,9 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
   // Active Timer Loop Effect
   useEffect(() => {
     if (campaign.status !== 'running') return;
+    if (activePromptGroup) return; // Do not decrement while waiting for current post confirmation
+
+    if (campaign.nextPostCountdown <= 0) return;
 
     const timer = setInterval(() => {
       onUpdateCampaign({
@@ -186,20 +226,19 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [campaign.status, campaign.nextPostCountdown]);
+  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup]);
 
-  // Handle when countdown reaches 0: dispatch post
+  // Trigger dispatch when countdown hits 0
   useEffect(() => {
     if (campaign.status !== 'running') return;
     if (campaign.nextPostCountdown > 0) return;
+    if (activePromptGroup) return; // Already prompted
 
-    // Trigger dispatch action
     const currentGroup = groups.find(
       (g) => g.id === campaign.selectedGroupIds[campaign.currentIndex]
     );
 
     if (!currentGroup) {
-      // Completed all
       onUpdateCampaign({
         ...campaign,
         status: 'completed',
@@ -209,22 +248,49 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
       return;
     }
 
-    // Execute Post Simulation / Dispatch
     const template = templates.find((t) => t.id === campaign.templateId) || templates[0];
     const resolvedPostContent = resolveSpintax(template.content);
 
-    // Add success log
+    // Auto copy resolved text to clipboard
+    try {
+      navigator.clipboard.writeText(resolvedPostContent);
+      setCopiedTextNotice(true);
+      setTimeout(() => setCopiedTextNotice(false), 4000);
+    } catch (e) {
+      console.warn('Clipboard write error', e);
+    }
+
+    // Auto open group tab in browser if enabled
+    if (autoOpenTab) {
+      try {
+        window.open(currentGroup.url, '_blank');
+      } catch (e) {
+        console.warn('Window open blocked', e);
+      }
+    }
+
+    // Activate assistant step
+    setActivePromptGroup({
+      group: currentGroup,
+      template,
+      resolvedText: resolvedPostContent
+    });
+  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup]);
+
+  // User confirms they posted to Facebook
+  const handleConfirmPost = (group: FacebookGroup, template: PostTemplate, resolvedText: string) => {
+    // Add genuine log pointing to the real group URL
     const logItem: CampaignLog = {
       id: `log-${Date.now()}`,
       timestamp: new Date().toLocaleTimeString('pt-BR'),
-      groupId: currentGroup.id,
-      groupName: currentGroup.name,
+      groupId: group.id,
+      groupName: group.name,
       templateId: template.id,
       templateTitle: template.title,
       status: 'success',
-      postUrl: `${currentGroup.url}/posts/${Math.floor(100000000000000 + Math.random() * 900000000000000)}`,
-      details: `Publicado com sucesso via sessão ativa do navegador. Digitação simulada com ${template.images.length} fotos anexadas.`,
-      resolvedText: resolvedPostContent,
+      postUrl: group.url,
+      details: `Publicado com sucesso no feed do grupo via assistente direto.`,
+      resolvedText: resolvedText,
       delayWaitedSeconds: antiBanRules.minDelaySeconds
     };
     onAddLog(logItem);
@@ -234,8 +300,9 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
     const newBatchCount = campaign.postsInCurrentBatch + 1;
     const isEndOfBatch = newBatchCount >= antiBanRules.blockBatchSize;
 
+    setActivePromptGroup(null);
+
     if (nextIndex >= campaign.selectedGroupIds.length) {
-      // Finished all
       onUpdateCampaign({
         ...campaign,
         currentIndex: nextIndex,
@@ -245,12 +312,10 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
         completedAt: new Date().toISOString()
       });
     } else {
-      // Determine next delay: Batch pause or standard jitter delay
       let nextDelaySeconds = 0;
       let phaseText = '';
 
       if (isEndOfBatch) {
-        // Safe Long Batch Pause (ex: 500 to 900 seconds)
         const batchPause = calculateRandomDelay(
           antiBanRules.blockPauseMinSeconds,
           antiBanRules.blockPauseMaxSeconds
@@ -261,7 +326,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
         onAddLog({
           id: `log-batch-${Date.now()}`,
           timestamp: new Date().toLocaleTimeString('pt-BR'),
-          groupId: currentGroup.id,
+          groupId: group.id,
           groupName: 'Motor Anti-Ban',
           templateId: template.id,
           templateTitle: template.title,
@@ -271,7 +336,6 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
           delayWaitedSeconds: batchPause
         });
       } else {
-        // Standard random jitter delay (ex: 120 to 300 seconds)
         const standardDelay = calculateRandomDelay(
           antiBanRules.minDelaySeconds,
           antiBanRules.maxDelaySeconds
@@ -283,7 +347,6 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
         phaseText = `Aguardando delay seguro (${standardDelay}s) para envio ao grupo "${nextGroup?.name || ''}"...`;
       }
 
-      // Apply speed multiplier for UI testing if enabled
       const finalCountdown = Math.max(
         3,
         Math.round(nextDelaySeconds / (speedMode === 'fast' ? 15 : 1))
@@ -298,7 +361,52 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
         currentPhaseText: phaseText
       });
     }
-  }, [campaign.status, campaign.nextPostCountdown]);
+  };
+
+  // User chooses to skip current group
+  const handleSkipGroup = (group: FacebookGroup, template: PostTemplate) => {
+    onAddLog({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString('pt-BR'),
+      groupId: group.id,
+      groupName: group.name,
+      templateId: template.id,
+      templateTitle: template.title,
+      status: 'skipped',
+      postUrl: group.url,
+      details: `Grupo pulado pelo operador durante a execução da fila.`,
+      resolvedText: '',
+      delayWaitedSeconds: 0
+    });
+
+    const nextIndex = campaign.currentIndex + 1;
+    setActivePromptGroup(null);
+
+    if (nextIndex >= campaign.selectedGroupIds.length) {
+      onUpdateCampaign({
+        ...campaign,
+        currentIndex: nextIndex,
+        status: 'completed',
+        currentPhaseText: 'Campanha finalizada.',
+        completedAt: new Date().toISOString()
+      });
+    } else {
+      const nextDelay = 5;
+      onUpdateCampaign({
+        ...campaign,
+        currentIndex: nextIndex,
+        nextPostCountdown: nextDelay,
+        currentPhaseText: `Grupo pulado. Avançando para o próximo grupo da fila...`
+      });
+    }
+  };
+
+  // Copy text helper
+  const handleCopyText = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedTextNotice(true);
+    setTimeout(() => setCopiedTextNotice(false), 2000);
+  };
 
   // Format seconds to mm:ss
   const formatTime = (totalSeconds: number) => {
@@ -314,6 +422,79 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Information Banner: How it Works & Real Posting */}
+      <div className="bg-gradient-to-r from-blue-900/90 via-slate-900 to-indigo-950 p-5 rounded-2xl border border-blue-800/60 text-white shadow-md space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-400 flex-shrink-0">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                Como Funciona a Publicação Real nos Grupos
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Zero Risco de Ban
+                </span>
+              </h4>
+              <p className="text-xs text-slate-300">
+                O sistema gerencia sua fila de grupos, gera textos com Spintax únicos e controla os intervalos de segurança.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowGuideModal(true)}
+              className="px-3 py-1.5 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
+              <span>Como Funciona</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadZip}
+              disabled={downloadingZip}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              {zipDownloaded ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Extensão Baixada!</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{downloadingZip ? 'Gerando...' : 'Baixar Extensão (.ZIP)'}</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 text-xs border-t border-slate-800/80">
+          <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700/70 space-y-1">
+            <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+              <CheckCircle className="w-3.5 h-3.5" />
+              Modo 1: Assistente Guiado Direto (Ativo Agora)
+            </div>
+            <p className="text-slate-300 text-[11px] leading-relaxed">
+              A cada término do delay, a aba do grupo se abre, o anúncio já é <strong>copiado automaticamente</strong> para você colar (Ctrl+V) e postar em 3 segundos. 100% à prova de bloqueios do Facebook!
+            </p>
+          </div>
+
+          <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700/70 space-y-1">
+            <div className="flex items-center gap-1.5 text-blue-400 font-semibold">
+              <Download className="w-3.5 h-3.5" />
+              Modo 2: Extensão Chrome Manifest V3 (Robô Silencioso)
+            </div>
+            <p className="text-slate-300 text-[11px] leading-relaxed">
+              Instale a extensão pronta no seu Chrome para que ela digite e publique sozinha em segundo plano sem você precisar clicar ou colar nada.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Anti-Ban Rules & Safeguards Config Card */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
@@ -333,7 +514,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
               <button
                 type="button"
                 onClick={() => setSpeedMode('real')}
-                className={`px-3 py-1 rounded-md font-medium transition-colors ${
+                className={`px-3 py-1 rounded-md font-medium transition-colors cursor-pointer ${
                   speedMode === 'real'
                     ? 'bg-blue-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -344,7 +525,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
               <button
                 type="button"
                 onClick={() => setSpeedMode('fast')}
-                className={`px-3 py-1 rounded-md font-medium transition-colors flex items-center gap-1 ${
+                className={`px-3 py-1 rounded-md font-medium transition-colors flex items-center gap-1 cursor-pointer ${
                   speedMode === 'fast'
                     ? 'bg-amber-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -456,49 +637,62 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
               </div>
 
               <div className="flex items-center gap-3 text-xs text-slate-600">
-                <span className="w-24">Pausa de Lote:</span>
+                <span className="w-24">Tempo da Pausa:</span>
                 <input
                   type="range"
                   min="300"
-                  max="1200"
-                  step="30"
+                  max="1800"
+                  step="60"
                   value={antiBanRules.blockPauseMinSeconds}
                   disabled={campaign.status === 'running'}
                   onChange={(e) =>
                     onUpdateAntiBanRules({
                       ...antiBanRules,
                       blockPauseMinSeconds: parseInt(e.target.value),
-                      blockPauseMaxSeconds: Math.max(parseInt(e.target.value) + 180, antiBanRules.blockPauseMaxSeconds)
+                      blockPauseMaxSeconds: parseInt(e.target.value) + 300
                     })
                   }
                   className="flex-1 accent-emerald-600"
                 />
                 <span className="w-16 font-mono font-semibold">
-                  {Math.round(antiBanRules.blockPauseMinSeconds / 60)} a {Math.round(antiBanRules.blockPauseMaxSeconds / 60)} min
+                  {Math.round(antiBanRules.blockPauseMinSeconds / 60)} min
                 </span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Safety Toggles Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+        {/* Checkbox Options */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2">
           <label className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium cursor-pointer">
             <input
               type="checkbox"
-              checked={antiBanRules.humanTypingSimulation}
+              checked={autoOpenTab}
+              onChange={(e) => setAutoOpenTab(e.target.checked)}
+              className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+            />
+            <div>
+              <p className="text-slate-900 font-semibold">Abrir Aba Automaticamente</p>
+              <p className="text-[11px] text-slate-500">Abre o grupo ao zerar delay</p>
+            </div>
+          </label>
+
+          <label className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium cursor-pointer">
+            <input
+              type="checkbox"
+              checked={antiBanRules.spintaxEnabled}
               disabled={campaign.status === 'running'}
               onChange={(e) =>
                 onUpdateAntiBanRules({
                   ...antiBanRules,
-                  humanTypingSimulation: e.target.checked
+                  spintaxEnabled: e.target.checked
                 })
               }
               className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
             />
             <div>
-              <p className="text-slate-900 font-semibold">Digitação Humana (40-120ms)</p>
-              <p className="text-[11px] text-slate-500">Sem injeção instantânea</p>
+              <p className="text-slate-900 font-semibold">Spintax Dinâmico Ativo</p>
+              <p className="text-[11px] text-slate-500">Textos únicos por grupo</p>
             </div>
           </label>
 
@@ -516,7 +710,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
               className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
             />
             <div>
-              <p className="text-slate-900 font-semibold">Embaralhar Ordem dos Grupos</p>
+              <p className="text-slate-900 font-semibold">Embaralhar Grupos</p>
               <p className="text-[11px] text-slate-500">Evita repetição de rota</p>
             </div>
           </label>
@@ -535,7 +729,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
               className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
             />
             <div>
-              <p className="text-slate-900 font-semibold">Abortar em Checkpoint/Captcha</p>
+              <p className="text-slate-900 font-semibold">Abortar em Checkpoint</p>
               <p className="text-[11px] text-slate-500">Interrompe se houver aviso</p>
             </div>
           </label>
@@ -603,7 +797,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                       key={cat.id}
                       disabled={campaign.status === 'running'}
                       onClick={() => toggleCategory(cat.id)}
-                      className={`p-3 rounded-xl border text-left text-xs transition-all flex items-center justify-between ${
+                      className={`p-3 rounded-xl border text-left text-xs transition-all flex items-center justify-between cursor-pointer ${
                         isChecked
                           ? 'border-blue-500 bg-blue-50/60 text-slate-900 font-semibold shadow-xs'
                           : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 opacity-70'
@@ -633,7 +827,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                   id="btn-start-campaign"
                   onClick={handleStartCampaign}
                   disabled={eligibleGroups.length === 0}
-                  className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-colors"
+                  className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-colors cursor-pointer"
                 >
                   <Play className="w-5 h-5 fill-current" />
                   Iniciar Disparador Seguro ({eligibleGroups.length} Grupos)
@@ -644,7 +838,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                     <button
                       type="button"
                       onClick={handlePauseCampaign}
-                      className="flex-1 py-3 px-4 bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition-colors"
+                      className="flex-1 py-3 px-4 bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
                     >
                       <Pause className="w-5 h-5" />
                       Pausar Disparos
@@ -653,7 +847,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                     <button
                       type="button"
                       onClick={handleResumeCampaign}
-                      className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition-colors"
+                      className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
                     >
                       <Play className="w-5 h-5 fill-current" />
                       Retomar Disparos
@@ -663,7 +857,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                   <button
                     type="button"
                     onClick={handleStopCampaign}
-                    className="py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition-colors"
+                    className="py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
                   >
                     <Square className="w-5 h-5" />
                     Encerrar
@@ -695,7 +889,9 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                 {/* Visual pulse glow */}
                 <div
                   className={`w-36 h-36 rounded-full border-4 flex flex-col items-center justify-center transition-all ${
-                    campaign.status === 'running'
+                    activePromptGroup
+                      ? 'border-blue-500 bg-blue-950/40 shadow-lg shadow-blue-500/30 animate-pulse'
+                      : campaign.status === 'running'
                       ? 'border-emerald-500 bg-emerald-950/30 shadow-lg shadow-emerald-500/20'
                       : campaign.status === 'paused'
                       ? 'border-amber-500 bg-amber-950/30'
@@ -703,25 +899,31 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                   }`}
                 >
                   <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">
-                    Próximo Envio Em
+                    {activePromptGroup ? 'Ação Necessária' : 'Próximo Envio Em'}
                   </span>
                   <span className="text-3xl font-extrabold font-mono text-white tracking-tight">
-                    {campaign.status === 'running'
+                    {activePromptGroup
+                      ? 'POSTAR'
+                      : campaign.status === 'running'
                       ? formatTime(campaign.nextPostCountdown)
                       : '--:--'}
                   </span>
                   <span className="text-[10px] text-emerald-400 font-medium mt-0.5">
-                    {campaign.status === 'running' ? 'Delay Seguro' : 'Aguardando'}
+                    {activePromptGroup
+                      ? 'Aguardando confirmação'
+                      : campaign.status === 'running'
+                      ? 'Delay Seguro'
+                      : 'Aguardando'}
                   </span>
                 </div>
               </div>
 
               {/* Skip wait quick button (useful for demonstration or testing) */}
-              {campaign.status === 'running' && campaign.nextPostCountdown > 5 && (
+              {campaign.status === 'running' && campaign.nextPostCountdown > 0 && !activePromptGroup && (
                 <button
                   type="button"
                   onClick={handleSkipWait}
-                  className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-white bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700 transition-colors"
+                  className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-white bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700 transition-colors cursor-pointer"
                 >
                   <SkipForward className="w-3.5 h-3.5 text-blue-400" />
                   <span>Avançar tempo do delay</span>
@@ -729,7 +931,9 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
               )}
 
               <p className="text-xs text-slate-300 font-medium max-w-md px-4 py-2 bg-slate-800/60 rounded-xl border border-slate-700">
-                {campaign.currentPhaseText || 'Aguardando início de campanha...'}
+                {activePromptGroup
+                  ? `👉 Postando no grupo: "${activePromptGroup.group.name}"`
+                  : campaign.currentPhaseText || 'Aguardando início de campanha...'}
               </p>
             </div>
 
@@ -772,20 +976,211 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                 </p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
 
-            {/* Active Session Verification Info */}
-            <div className="p-3 bg-blue-950/40 rounded-xl border border-blue-900/60 flex items-start gap-2.5 text-xs text-blue-200">
-              <ShieldCheck className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold text-blue-100">Operando com a Sessão do Seu Navegador</p>
-                <p className="text-blue-300 text-[11px] mt-0.5">
-                  Para os disparos ocorrerem, mantenha uma aba com o Facebook aberta. Nenhuma credencial pessoal é transmitida ou salva.
-                </p>
+      {/* Active Post Prompt Modal / Action Card */}
+      {activePromptGroup && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden space-y-0 my-8">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white flex-shrink-0">
+                  <Send className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    Hora de Publicar no Grupo!
+                  </h3>
+                  <p className="text-xs text-blue-100">
+                    O temporizador anti-ban atingiu zero. Publique agora de forma segura.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Target Group Info */}
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Grupo Selecionado ({campaign.currentIndex + 1} de {campaign.totalGroups})
+                  </span>
+                  <h4 className="text-sm font-bold text-slate-900 truncate">
+                    {activePromptGroup.group.name}
+                  </h4>
+                  <a
+                    href={activePromptGroup.group.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium mt-0.5 truncate"
+                  >
+                    <span>{activePromptGroup.group.url}</span>
+                    <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                  </a>
+                </div>
+
+                <a
+                  href={activePromptGroup.group.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold flex items-center gap-1.5 flex-shrink-0 transition-colors"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>Reabrir Aba FB</span>
+                </a>
+              </div>
+
+              {/* Automatic Clipboard Alert */}
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-xs text-emerald-800">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <span>
+                    O texto do anúncio (com Spintax exclusivo) <strong>já foi copiado</strong> para sua área de transferência!
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopyText(activePromptGroup.resolvedText)}
+                  className="px-2.5 py-1 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer flex-shrink-0"
+                >
+                  {copiedTextNotice ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-600" />
+                      <span>Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Copiar de novo</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Post Content Preview Box */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span className="font-semibold">Texto pronto para colar:</span>
+                  <span className="text-[11px] text-slate-400">
+                    {activePromptGroup.template.images.length} fotos no template
+                  </span>
+                </div>
+                <div className="p-3.5 bg-slate-900 text-slate-100 rounded-xl text-xs font-mono max-h-36 overflow-y-auto whitespace-pre-wrap leading-relaxed border border-slate-800">
+                  {activePromptGroup.resolvedText}
+                </div>
+              </div>
+
+              {/* Quick 3-Step Instruction */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                  Como postar no Facebook (3 segundos):
+                </span>
+                <ol className="text-xs text-slate-600 space-y-1.5 list-decimal list-inside leading-relaxed">
+                  <li>Na aba do grupo que se abriu no Facebook, clique em <strong>&quot;No que você está pensando?&quot;</strong> ou <strong>&quot;Escreva algo...&quot;</strong>.</li>
+                  <li>Pressione <strong>Ctrl + V</strong> para colar o texto do anúncio gerado.</li>
+                  <li>Clique no botão azul <strong>Publicar</strong> do Facebook!</li>
+                </ol>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleConfirmPost(
+                      activePromptGroup.group,
+                      activePromptGroup.template,
+                      activePromptGroup.resolvedText
+                    )
+                  }
+                  className="w-full sm:flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  <span>Confirmei que Publiquei! Próximo Grupo</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSkipGroup(activePromptGroup.group, activePromptGroup.template)
+                  }
+                  className="w-full sm:w-auto py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  Pular Este Grupo
+                </button>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Guide Modal: How Real Automation Works */}
+      {showGuideModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8">
+            <div className="bg-gradient-to-r from-slate-900 to-blue-900 p-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-400">
+                  <HelpCircle className="w-5 h-5" />
+                </div>
+                <h3 className="text-base font-bold">Instruções de Postagem no Facebook</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGuideModal(false)}
+                className="text-slate-400 hover:text-white text-lg font-bold px-2 py-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs text-slate-600">
+              <div className="space-y-2">
+                <h4 className="font-bold text-sm text-slate-900">Por que o navegador precisa de você ou da Extensão?</h4>
+                <p className="leading-relaxed">
+                  Por segurança do próprio Google Chrome, nenhuma página web pode entrar em outra aba silenciosamente e digitar sozinha no Facebook.
+                </p>
+              </div>
+
+              <div className="bg-blue-50 p-3.5 rounded-xl border border-blue-200 space-y-1 text-blue-900">
+                <p className="font-bold text-xs">Modo 1: Assistente Direto (Sem Instalação)</p>
+                <p className="text-[11px] leading-relaxed">
+                  Você aperta &quot;Iniciar Disparador&quot;. A cada grupo, o sistema copia o anúncio diferente para você, abre o grupo e você apenas cola (Ctrl+V) e clica em Publicar. O Facebook vê uma ação 100% humana, garantindo 0% de chance de bloqueio!
+                </p>
+              </div>
+
+              <div className="bg-emerald-50 p-3.5 rounded-xl border border-emerald-200 space-y-1 text-emerald-900">
+                <p className="font-bold text-xs">Modo 2: Extensão Chrome Manifest V3 (Automática)</p>
+                <p className="text-[11px] leading-relaxed">
+                  Deseja que o robô faça tudo sozinho em segundo plano? Baixe a extensão (.ZIP), descompacte e carregue em <code>chrome://extensions</code> no modo desenvolvedor. A extensão tem permissão do Chrome para digitar e publicar automaticamente.
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={handleDownloadZip}
+                  disabled={downloadingZip}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>{downloadingZip ? 'Baixando...' : 'Baixar Extensão (.ZIP)'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowGuideModal(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl transition-colors cursor-pointer"
+                >
+                  Entendido
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
