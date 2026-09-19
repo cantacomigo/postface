@@ -59,6 +59,9 @@ export async function downloadExtensionZip(): Promise<void> {
   ],
   "host_permissions": [
     "https://*.facebook.com/*",
+    "https://facebook.com/*",
+    "http://*.facebook.com/*",
+    "http://facebook.com/*",
     "http://localhost:3000/*",
     "https://*.run.app/*",
     "https://*.vercel.app/*",
@@ -84,7 +87,12 @@ export async function downloadExtensionZip(): Promise<void> {
   },
   "content_scripts": [
     {
-      "matches": ["https://*.facebook.com/*"],
+      "matches": [
+        "https://*.facebook.com/*",
+        "https://facebook.com/*",
+        "http://*.facebook.com/*",
+        "http://facebook.com/*"
+      ],
       "js": [
         "utils/spintax-engine.js",
         "content-scripts/checkpoint-watcher.js",
@@ -181,39 +189,21 @@ async function runPostWorkflow({ template, group }) {
   // 1. Verificação preventiva de avisos de restrição na conta
   checkAccountRestrictions();
 
-  // 2. Aguarda carregamento inicial da página
+  // 2. Aguarda carregamento e estabilização da página do Facebook
+  await sleep(3500);
+
+  // 3. Localiza e aciona a caixa "Escreva algo..." / "No que você está pensando..."
+  const opened = await findAndClickComposerTrigger();
+  if (!opened) {
+    throw new Error('Caixa de publicação "Escreva algo..." não encontrada ou não clicável no grupo.');
+  }
+
+  // 4. Aguarda a abertura do modal / área de edição
   await sleep(2500);
-
-  // 3. Localiza a caixa de criação de publicação
-  const composerTrigger = await waitForElement([
-    '[role="button"][aria-label*="No que você está pensando"]',
-    '[role="button"][aria-label*="Escreva algo"]',
-    '[role="button"][aria-label*="Criar publicação"]',
-    '[role="button"][aria-label*="Create a public post"]',
-    '[role="button"][aria-label*="Write something"]',
-    'div[role="feed"] div[role="button"]'
-  ], 10000);
-
-  if (!composerTrigger) {
-    throw new Error('Caixa de publicação do grupo não localizada no DOM.');
-  }
-
-  // Clica no gatilho para abrir o modal de escrita
-  composerTrigger.click();
-  await sleep(2000);
-
-  // 4. Localiza a área editável rica (Lexical / Draft.js do Facebook)
-  const editorArea = await waitForElement([
-    'div[role="textbox"][contenteditable="true"]',
-    'div[data-lexical-editor="true"]',
-    'div[contenteditable="true"]'
-  ], 8000);
-
+  const editorArea = await findEditorArea();
   if (!editorArea) {
-    throw new Error('Área de digitação de texto não acessível no Facebook.');
+    throw new Error('Área de digitação de texto (Lexical) não acessível no Facebook.');
   }
-
-  editorArea.focus();
 
   // 5. Resolve Spintax
   let textToPost = template.content;
@@ -221,33 +211,18 @@ async function runPostWorkflow({ template, group }) {
     textToPost = resolveSpintax(template.content);
   }
 
-  // 6. Insere o texto
+  // 6. Insere o texto simulando digitação humana
   await insertTextIntoEditor(editorArea, textToPost);
-  await sleep(1500);
+  await sleep(2000);
 
-  // 7. Localiza o botão "Publicar" ou "Post"
-  const submitButton = await waitForElement([
-    'div[aria-label="Publicar"][role="button"]',
-    'div[aria-label="Post"][role="button"]',
-    'div[aria-label="Publicar"]',
-    'div[role="button"]:has(span:contains("Publicar"))'
-  ], 6000);
-
-  if (!submitButton) {
-    throw new Error('Botão "Publicar" não localizado no modal.');
+  // 7. Localiza e aciona o botão Publicar
+  const submitted = await findAndClickSubmitButton();
+  if (!submitted) {
+    throw new Error('Botão "Publicar" não localizado ou continuou desabilitado pelo Facebook.');
   }
 
-  // Verifica se não está desabilitado
-  if (submitButton.getAttribute('aria-disabled') === 'true') {
-    throw new Error('Botão de publicação está desabilitado pelo Facebook.');
-  }
-
-  // Clica para publicar
-  submitButton.click();
-  console.log('[AutoPost FB] Botão Publicar acionado com sucesso!');
-
-  // 8. Aguarda 4 segundos para o envio processar
-  await sleep(4000);
+  // 8. Aguarda 6 segundos para processamento e publicação no servidor do Facebook
+  await sleep(6000);
 
   return {
     postUrl: window.location.href,
@@ -256,24 +231,162 @@ async function runPostWorkflow({ template, group }) {
   };
 }
 
-async function insertTextIntoEditor(element, text) {
-  element.focus();
-  try {
-    // Tenta primeiro método nativo de inserção
-    document.execCommand('selectAll', false, null);
-    document.execCommand('insertText', false, text);
-  } catch (e) {
-    console.warn('execCommand insertText failed, using fallback event', e);
+async function findAndClickComposerTrigger() {
+  const startTime = Date.now();
+  const maxWaitMs = 18000;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const keywords = [
+      'escreva algo',
+      'no que você está pensando',
+      'criar publicação',
+      'write something',
+      'what\'s on your mind',
+      'create a public post'
+    ];
+
+    const elements = Array.from(document.querySelectorAll('span, div[role="button"], div[tabindex="0"], div[role="textbox"], div'));
+    for (const el of elements) {
+      if (el.children.length > 3) continue;
+      const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+      if (keywords.some(k => text === k || text.startsWith(k))) {
+        const clickable = el.closest('[role="button"]') || el.closest('[tabindex="0"]') || el.closest('div') || el;
+        clickable.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await sleep(600);
+        clickable.click();
+        console.log('[AutoPost FB] Gatilho de publicação clicado com sucesso:', text);
+        return true;
+      }
+    }
+
+    const ariaEl = document.querySelector([
+      '[aria-label*="Escreva algo"]',
+      '[aria-label*="No que você está pensando"]',
+      '[aria-label*="Criar publicação"]',
+      '[aria-label*="Create a public post"]',
+      '[aria-label*="Write something"]'
+    ].join(', '));
+
+    if (ariaEl) {
+      ariaEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      await sleep(600);
+      ariaEl.click();
+      console.log('[AutoPost FB] Gatilho clicado via aria-label.');
+      return true;
+    }
+
+    await sleep(600);
   }
 
-  // Fallback / complementação com InputEvent
-  const event = new InputEvent('beforeinput', {
-    bubbles: true,
-    cancelable: true,
-    inputType: 'insertText',
-    data: text
-  });
-  element.dispatchEvent(event);
+  return false;
+}
+
+async function findEditorArea() {
+  const startTime = Date.now();
+  const maxWaitMs = 15000;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const dialog = document.querySelector('div[role="dialog"]');
+    const root = dialog || document;
+
+    const editor = root.querySelector('div[role="textbox"][contenteditable="true"]') ||
+                   root.querySelector('div[data-lexical-editor="true"]') ||
+                   root.querySelector('div[contenteditable="true"][tabindex="0"]') ||
+                   root.querySelector('div[contenteditable="true"]');
+
+    if (editor) {
+      editor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return editor;
+    }
+    await sleep(400);
+  }
+  return null;
+}
+
+async function insertTextIntoEditor(element, text) {
+  element.focus();
+  await sleep(400);
+
+  element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  element.focus();
+  await sleep(300);
+
+  document.execCommand('selectAll', false, null);
+
+  let execSuccess = false;
+  try {
+    execSuccess = document.execCommand('insertText', false, text);
+  } catch (e) {
+    execSuccess = false;
+  }
+
+  const currentText = (element.innerText || element.textContent || '').trim();
+  if (!execSuccess || !currentText) {
+    try {
+      const event = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: text
+      });
+      element.dispatchEvent(event);
+    } catch (e) {}
+
+    if (!(element.innerText || element.textContent || '').trim()) {
+      element.innerText = text;
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+
+  await sleep(1200);
+}
+
+async function findAndClickSubmitButton() {
+  const startTime = Date.now();
+  const maxWaitMs = 15000;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const dialog = document.querySelector('div[role="dialog"]') || document;
+
+    let btn = dialog.querySelector([
+      '[aria-label="Publicar"][role="button"]',
+      '[aria-label="Post"][role="button"]',
+      '[aria-label="Publicar"]',
+      '[aria-label="Post"]',
+      '[aria-label*="Publicar"]'
+    ].join(', '));
+
+    if (!btn) {
+      const allButtons = Array.from(dialog.querySelectorAll('[role="button"], button'));
+      for (const b of allButtons) {
+        const txt = (b.innerText || b.textContent || '').trim().toLowerCase();
+        if (txt === 'publicar' || txt === 'post' || txt === 'concluir') {
+          btn = b;
+          break;
+        }
+      }
+    }
+
+    if (btn) {
+      const isDisabled = btn.getAttribute('aria-disabled') === 'true' || btn.disabled;
+      if (!isDisabled) {
+        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await sleep(600);
+        btn.click();
+        console.log('[AutoPost FB] Botão "Publicar" acionado com sucesso!');
+        return true;
+      } else {
+        console.log('[AutoPost FB] Botão "Publicar" detectado, aguardando liberação...');
+      }
+    }
+
+    await sleep(600);
+  }
+
+  return false;
 }
 
 function checkAccountRestrictions() {
@@ -450,6 +563,54 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
+function waitForTabComplete(tabId, timeoutMs = 25000) {
+  return new Promise((resolve) => {
+    let finished = false;
+    const timer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }, timeoutMs);
+
+    function listener(updatedTabId, changeInfo) {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+function sendTabMessageWithRetry(tabId, message, maxAttempts = 10, intervalMs = 1500) {
+  return new Promise(async (resolve, reject) => {
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const res = await new Promise((resInner, rejInner) => {
+          chrome.tabs.sendMessage(tabId, message, (resp) => {
+            if (chrome.runtime.lastError) {
+              rejInner(new Error(chrome.runtime.lastError.message));
+            } else {
+              resInner(resp);
+            }
+          });
+        });
+        return resolve(res);
+      } catch (err) {
+        console.log('[AutoPost FB] Aguardando inicialização do content script na aba (tentativa ' + (i+1) + '/' + maxAttempts + ')...');
+        await new Promise(r => setTimeout(r, intervalMs));
+      }
+    }
+    reject(new Error('Não foi possível conectar com o script da página do Facebook após várias tentativas.'));
+  });
+}
+
 async function dispatchNextPost() {
   if (!state.isRunning || state.currentIndex >= state.queue.length) {
     state.isRunning = false;
@@ -467,52 +628,66 @@ async function dispatchNextPost() {
     total: state.queue.length
   });
 
+  let tab = null;
   try {
-    // 1. Cria a aba do grupo em segundo plano (active: false para não atrapalhar o usuário)
-    const tab = await chrome.tabs.create({ url: targetGroup.url, active: false });
+    // 1. Cria a aba do grupo ativa para garantir prioridade de execução do Facebook
+    tab = await chrome.tabs.create({ url: targetGroup.url, active: true });
 
-    // 2. Aguarda 6 segundos para renderização da página
-    setTimeout(() => {
-      chrome.tabs.sendMessage(tab.id, {
+    // 2. Aguarda a aba carregar completamente
+    await waitForTabComplete(tab.id, 25000);
+    // 3. Aguarda mais 3.5 segundos para o React e Lexical do Facebook inicializarem o DOM
+    await new Promise(r => setTimeout(r, 3500));
+
+    let response = null;
+    let postError = null;
+
+    try {
+      response = await sendTabMessageWithRetry(tab.id, {
         action: 'EXECUTE_POST',
         payload: {
           template: state.currentCampaign.template,
           group: targetGroup
         }
-      }, async (response) => {
-        // Fecha a aba temporária de postagem
-        chrome.tabs.remove(tab.id).catch(() => {});
+      }, 10, 1500);
+    } catch (err) {
+      postError = err.message;
+    }
 
-        if (response && response.success) {
-          state.currentIndex++;
-          state.currentBatchCount++;
+    // Aguarda 1.5s antes de fechar a aba
+    await new Promise(r => setTimeout(r, 1500));
+    if (tab && tab.id) {
+      chrome.tabs.remove(tab.id).catch(() => {});
+    }
 
-          const logEntry = {
-            timestamp: new Date().toLocaleTimeString(),
-            groupName: targetGroup.name,
-            status: 'success',
-            postUrl: targetGroup.url
-          };
-          await appendLog(logEntry);
-          broadcast({ type: 'POST_SUCCESS', log: logEntry });
+    if (response && response.success) {
+      state.currentIndex++;
+      state.currentBatchCount++;
 
-          scheduleNextDelay();
-        } else {
-          const logEntry = {
-            timestamp: new Date().toLocaleTimeString(),
-            groupName: targetGroup.name,
-            status: 'failed',
-            details: response?.error || 'Falha ao interagir com o editor do Facebook'
-          };
-          await appendLog(logEntry);
-          broadcast({ type: 'POST_FAILED', log: logEntry });
-
-          scheduleNextDelay();
-        }
-      });
-    }, 6000);
+      const logEntry = {
+        timestamp: new Date().toLocaleTimeString(),
+        groupName: targetGroup.name,
+        status: 'success',
+        postUrl: targetGroup.url
+      };
+      await appendLog(logEntry);
+      broadcast({ type: 'POST_SUCCESS', log: logEntry });
+      scheduleNextDelay();
+    } else {
+      const logEntry = {
+        timestamp: new Date().toLocaleTimeString(),
+        groupName: targetGroup.name,
+        status: 'failed',
+        details: response?.error || postError || 'Falha ao interagir com o editor do Facebook'
+      };
+      await appendLog(logEntry);
+      broadcast({ type: 'POST_FAILED', log: logEntry });
+      scheduleNextDelay();
+    }
   } catch (err) {
     console.error('[AutoPost FB] Erro ao disparar postagem:', err);
+    if (tab && tab.id) {
+      chrome.tabs.remove(tab.id).catch(() => {});
+    }
     scheduleNextDelay();
   }
 }

@@ -42,7 +42,10 @@ export const ARCHITECTURE_FILES: ArchComponentFile[] = [
     "alarms"
   ],
   "host_permissions": [
-    "https://*.facebook.com/*"
+    "https://*.facebook.com/*",
+    "https://facebook.com/*",
+    "http://*.facebook.com/*",
+    "http://facebook.com/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",
@@ -54,7 +57,12 @@ export const ARCHITECTURE_FILES: ArchComponentFile[] = [
   },
   "content_scripts": [
     {
-      "matches": ["https://*.facebook.com/groups/*"],
+      "matches": [
+        "https://*.facebook.com/*",
+        "https://facebook.com/*",
+        "http://*.facebook.com/*",
+        "http://facebook.com/*"
+      ],
       "js": [
         "utils/spintax-engine.js",
         "content-scripts/checkpoint-watcher.js",
