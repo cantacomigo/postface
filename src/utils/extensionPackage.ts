@@ -278,12 +278,19 @@ async function insertTextIntoEditor(element, text) {
 
 function checkAccountRestrictions() {
   const bodyText = document.body.innerText || '';
-  if (
-    bodyText.includes('Você está temporariamente bloqueado') ||
-    bodyText.includes('Sua conta está com restrição') ||
-    bodyText.includes('Ação bloqueada')
-  ) {
-    throw new Error('RESTRICTION_DETECTED: O Facebook alertou restrição de atividade na sua conta.');
+  const checkpointPatterns = [
+    'Você está temporariamente bloqueado',
+    'Sua conta está com restrição',
+    'Ação bloqueada',
+    'Restringimos certas atividades',
+    'Confirmar sua identidade',
+    'Tentativa suspeita de login'
+  ];
+
+  for (const pattern of checkpointPatterns) {
+    if (bodyText.includes(pattern)) {
+      throw new Error('RESTRICTION_DETECTED: O Facebook alertou "' + pattern + '". Pausando campanhas por segurança.');
+    }
   }
 }
 

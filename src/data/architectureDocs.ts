@@ -403,13 +403,20 @@ async function simulateMediaAttachment(imageUrls) {
 }
 
 function checkAccountRestrictions() {
-  const text = document.body.innerText;
-  if (
-    text.includes('Você está temporariamente bloqueado') ||
-    text.includes('Sua conta está com restrição') ||
-    text.includes('Ação bloqueada')
-  ) {
-    throw new Error('RESTRICTION_DETECTED: O Facebook alertou restrição de atividade.');
+  const bodyText = document.body.innerText || '';
+  const checkpointPatterns = [
+    'Você está temporariamente bloqueado',
+    'Sua conta está com restrição',
+    'Ação bloqueada',
+    'Restringimos certas atividades',
+    'Confirmar sua identidade',
+    'Tentativa suspeita de login'
+  ];
+
+  for (const pattern of checkpointPatterns) {
+    if (bodyText.includes(pattern)) {
+      throw new Error(\`RESTRICTION_DETECTED: O Facebook alertou "\${pattern}". Pausando campanhas por segurança.\`);
+    }
   }
 }
 
@@ -615,6 +622,35 @@ export function resolveSpintax(text) {
   }
 
   return resolved;
+}
+`
+  },
+  {
+    filename: 'checkpoint-watcher.js',
+    language: 'javascript',
+    path: 'content-scripts/checkpoint-watcher.js',
+    description: 'Guardião Anti-Bloqueio: Monitora avisos de restrição, checkpoints e bloqueios no DOM do Facebook.',
+    code: `/**
+ * Checkpoint Watcher para a Extensão AutoPost FB
+ * Monitora avisos de restrição ou bloqueio no DOM do Facebook
+ */
+export function detectFacebookCheckpoint() {
+  const bodyText = document.body.innerText || '';
+  const checkpointPatterns = [
+    'Você está temporariamente bloqueado',
+    'Sua conta está com restrição',
+    'Ação bloqueada',
+    'Restringimos certas atividades',
+    'Confirmar sua identidade',
+    'Tentativa suspeita de login'
+  ];
+
+  for (const pattern of checkpointPatterns) {
+    if (bodyText.includes(pattern)) {
+      return { isBlocked: true, reason: pattern };
+    }
+  }
+  return { isBlocked: false };
 }`
   }
 ];
