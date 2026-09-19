@@ -593,23 +593,27 @@ export function calculateNextDelay(currentPostIndex, config) {
     filename: 'spintax-engine.js',
     language: 'javascript',
     path: 'utils/spintax-engine.js',
-    description: 'Motor Spintax: resolve variações dinâmicas de texto {Opção 1|Opção 2|Opção 3} gerando mensagens únicas.',
+    description: 'Motor Spintax: resolve variações dinâmicas de texto simples {A|B|C} e aninhadas {A|{B1|B2}} gerando mensagens únicas.',
     code: `/**
  * Spintax Engine para a Extensão AutoPost FB
- * Resolve sintaxe dinâmica {Opção 1|Opção 2|Opção 3}
+ * Resolve sintaxes {Opção 1|Opção 2|Opção 3} e Spintax Aninhado {Opção A|{Opção B1|Opção B2}}
  */
 export function resolveSpintax(text) {
   if (!text) return '';
-  const regex = /\\{([^{}]+)\\}/g;
+  // Localiza os grupos mais internos primeiro para resolução recursiva
+  const regex = /\\{([^{}]+)\\}/;
   let resolved = text;
-  let matches;
-  while ((matches = regex.exec(resolved)) !== null) {
-    const fullMatch = matches[0];
-    const options = matches[1].split('|');
-    const chosen = options[Math.floor(Math.random() * options.length)];
-    resolved = resolved.replace(fullMatch, chosen.trim());
-    regex.lastIndex = 0;
+  let safetyLimit = 100;
+
+  while (regex.test(resolved) && safetyLimit > 0) {
+    safetyLimit--;
+    resolved = resolved.replace(regex, (_, choicesStr) => {
+      const choices = choicesStr.split('|');
+      const chosen = choices[Math.floor(Math.random() * choices.length)];
+      return chosen !== undefined ? chosen.trim() : '';
+    });
   }
+
   return resolved;
 }`
   }

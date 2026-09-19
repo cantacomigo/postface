@@ -274,9 +274,9 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-semibold text-slate-700 uppercase tracking-wider flex items-center gap-1">
-                      Conteúdo do Post (com Spintax Anti-Ban)
+                      Conteúdo do Post (Spintax Simples & Aninhado)
                       <span className="text-blue-600 lowercase font-normal">
-                        &#123;opção 1|opção 2&#125;
+                        &#123;opção 1|&#123;sub-a|sub-b&#125;&#125;
                       </span>
                     </label>
                     <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
@@ -292,11 +292,11 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
                     onChange={(e) =>
                       setEditingTemplate({ ...editingTemplate, content: e.target.value })
                     }
-                    placeholder="{Olá|Oi|Bom dia}! {Apresentamos|Confira} nossa oportunidade..."
+                    placeholder="{Olá|Oi|{Bom dia|Boa tarde}}! {Apresentamos|{Confira|Dê uma olhada em}} nossa oportunidade..."
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                   />
                   <p className="text-xs text-slate-500 mt-1">
-                    Dica Anti-Bloqueio: Use variações de saudações, verbos e chamadas para ação. Cada post enviado pelo motor será único no algoritmo do Facebook.
+                    Dica Anti-Bloqueio: Suporta Spintax aninhado (chaves dentro de chaves) para multiplicar milhares de variações únicas. O motor resolve recursivamente antes de cada envio.
                   </p>
                 </div>
 

@@ -1,55 +1,73 @@
 /**
  * Spintax Resolver & Text Variation Engine
- * Transforms strings like "{Olá|Oi|Bom dia} {amigos|pessoal}" into unique human-like posts.
+ * Transforms strings with simple or nested Spintax like:
+ * "{Olá|Oi|{Bom dia|Boa tarde}} {amigos|{parceiros|colegas}}" into unique human-like posts.
  */
 
 export function resolveSpintax(text: string): string {
   if (!text) return '';
-  
-  const regex = /\{([^{}]+)\}/g;
-  let matchesFound = true;
-  let result = text;
 
-  // Loop to handle nested spintax like {Opção 1|{Opção 2A|Opção 2B}}
-  let safetyLimit = 20;
-  while (matchesFound && safetyLimit > 0) {
+  // Matches innermost {choice1|choice2|...} without containing nested braces
+  const regex = /\{([^{}]+)\}/;
+  let resolved = text;
+  let safetyLimit = 100;
+
+  while (regex.test(resolved) && safetyLimit > 0) {
     safetyLimit--;
-    const match = regex.exec(result);
-    if (!match) {
-      matchesFound = false;
-      break;
-    }
-    
-    result = result.replace(regex, (_, choicesStr) => {
+    resolved = resolved.replace(regex, (_, choicesStr: string) => {
       const choices = choicesStr.split('|');
-      const randomChoice = choices[Math.floor(Math.random() * choices.length)];
-      return randomChoice.trim();
+      const chosen = choices[Math.floor(Math.random() * choices.length)];
+      return chosen !== undefined ? chosen.trim() : '';
     });
-    
-    // Reset regex position
-    regex.lastIndex = 0;
   }
 
-  return result;
+  return resolved;
 }
 
 /**
- * Calculates approximately how many unique post variations a spintax string can produce
+ * Calculates approximately how many unique post variations a spintax string can produce,
+ * properly handling nested brackets like {A|{B|C}} (= 3 options) * {X|Y} (= 2 options) = 6.
  */
 export function calculateVariationsCount(text: string): number {
   if (!text) return 1;
-  const regex = /\{([^{}]+)\}/g;
-  let match;
-  let totalCombinations = 1;
 
-  while ((match = regex.exec(text)) !== null) {
-    const choices = match[1].split('|');
-    if (choices.length > 1) {
-      totalCombinations *= choices.length;
-    }
+  // We can calculate variations by reducing innermost braces to their numeric counts
+  const regex = /\{([^{}]+)\}/;
+  let working = text;
+  let safetyLimit = 50;
+
+  // Track top-level multipliers
+  while (regex.test(working) && safetyLimit > 0) {
+    safetyLimit--;
+    working = working.replace(regex, (_, choicesStr: string) => {
+      const choices = choicesStr.split('|');
+      // Sum the values if nested already evaluated to numbers, or count 1 per literal choice
+      let groupSum = 0;
+      for (const choice of choices) {
+        const trimmed = choice.trim();
+        const num = parseInt(trimmed, 10);
+        if (!isNaN(num) && String(num) === trimmed) {
+          groupSum += num;
+        } else {
+          groupSum += 1;
+        }
+      }
+      return String(Math.max(1, groupSum));
+    });
   }
 
-  return totalCombinations;
+  // Multiply all remaining standalone counts from the text
+  const numbersRegex = /\b\d+\b/g;
+  let totalCombinations = 1;
+  let match;
+  let foundAny = false;
+
+  while ((match = numbersRegex.exec(working)) !== null) {
+    foundAny = true;
+    totalCombinations *= Math.max(1, parseInt(match[0], 10));
+  }
+
+  return foundAny ? totalCombinations : 1;
 }
 
 /**
@@ -57,7 +75,7 @@ export function calculateVariationsCount(text: string): number {
  */
 export function generateSampleVariations(text: string, count: number = 3): string[] {
   const variations = new Set<string>();
-  for (let i = 0; i < count * 5; i++) {
+  for (let i = 0; i < count * 10; i++) {
     variations.add(resolveSpintax(text));
     if (variations.size >= count) break;
   }
