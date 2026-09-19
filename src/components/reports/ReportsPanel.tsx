@@ -12,7 +12,9 @@ import {
   ShieldCheck,
   PauseCircle,
   Eye,
-  Search
+  Search,
+  Copy,
+  Check
 } from 'lucide-react';
 
 interface ReportsPanelProps {
@@ -29,6 +31,7 @@ export const ReportsPanel: React.FC<ReportsPanelProps> = ({
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchLog, setSearchLog] = useState<string>('');
   const [inspectLog, setInspectLog] = useState<CampaignLog | null>(null);
+  const [copiedInspectText, setCopiedInspectText] = useState<boolean>(false);
 
   const filteredLogs = logs.filter((log) => {
     const matchesStatus = filterStatus === 'all' || log.status === filterStatus;
@@ -167,6 +170,16 @@ export const ReportsPanel: React.FC<ReportsPanelProps> = ({
               }`}
             >
               Ciclos Anti-Ban ({totalBatchPauses})
+            </button>
+            <button
+              onClick={() => setFilterStatus('failed')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                filterStatus === 'failed'
+                  ? 'bg-red-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Falhas / Alertas ({totalFailed})
             </button>
           </div>
 
@@ -343,10 +356,34 @@ export const ReportsPanel: React.FC<ReportsPanelProps> = ({
               </p>
             </div>
 
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-end gap-2 pt-2">
               <button
+                type="button"
+                onClick={() => {
+                  if (inspectLog?.resolvedText) {
+                    navigator.clipboard.writeText(inspectLog.resolvedText);
+                    setCopiedInspectText(true);
+                    setTimeout(() => setCopiedInspectText(false), 2000);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold rounded-lg border border-blue-200 transition-colors"
+              >
+                {copiedInspectText ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    Copiado!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    Copiar Texto Gerado
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
                 onClick={() => setInspectLog(null)}
-                className="px-4 py-2 bg-slate-800 text-white text-xs font-semibold rounded-lg"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg transition-colors"
               >
                 Fechar
               </button>

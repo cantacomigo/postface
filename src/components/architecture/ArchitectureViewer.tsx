@@ -39,6 +39,21 @@ export const ArchitectureViewer: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  const handleDownloadAllFiles = () => {
+    ARCHITECTURE_FILES.forEach((f, index) => {
+      setTimeout(() => {
+        const blob = new Blob([f.code], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = f.filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }, index * 200);
+    });
+  };
+
   return (
     <div className="space-y-6">
       {/* Executive Summary Card */}
@@ -230,6 +245,15 @@ export const ArchitectureViewer: React.FC = () => {
                 >
                   <Download className="w-3.5 h-3.5" />
                   Baixar Arquivo
+                </button>
+
+                <button
+                  onClick={handleDownloadAllFiles}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
+                  title="Baixar todos os arquivos da extensão para instalar no Chrome"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Baixar Todos ({ARCHITECTURE_FILES.length})
                 </button>
               </div>
             </div>

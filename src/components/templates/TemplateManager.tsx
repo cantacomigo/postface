@@ -35,6 +35,15 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
   const [sampleVariationText, setSampleVariationText] = useState<string>('');
   const [newImageUrl, setNewImageUrl] = useState<string>('');
   const [newTag, setNewTag] = useState<string>('');
+  const [isLiked, setIsLiked] = useState<boolean>(false);
+  const [likesCount, setLikesCount] = useState<number>(14);
+  const [isCommentBoxOpen, setIsCommentBoxOpen] = useState<boolean>(false);
+  const [comments, setComments] = useState<string[]>([
+    'Excelente oportunidade! Já mandei mensagem no inbox.',
+    'Qual a localização exata?'
+  ]);
+  const [commentInput, setCommentInput] = useState<string>('');
+  const [shareFeedback, setShareFeedback] = useState<boolean>(false);
 
   const emptyTemplate: PostTemplate = {
     id: `tpl-${Date.now()}`,
@@ -660,12 +669,104 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
                 </div>
               )}
 
-              {/* Facebook Engagement Mockup Bar */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-around text-xs text-slate-500 font-medium">
-                <span className="hover:text-blue-600 cursor-pointer">👍 Curtir</span>
-                <span className="hover:text-blue-600 cursor-pointer">💬 Comentar</span>
-                <span className="hover:text-blue-600 cursor-pointer">↗ Compartilhar</span>
+              {/* Facebook Engagement Counts */}
+              <div className="flex items-center justify-between text-[11px] text-slate-400 px-1 pt-2 border-t border-slate-100">
+                <span className="flex items-center gap-1 text-slate-600">
+                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px]">👍</span>
+                  {likesCount} {likesCount === 1 ? 'pessoa curtiu' : 'pessoas curtiram'}
+                </span>
+                <span>{comments.length} comentários</span>
               </div>
+
+              {/* Facebook Engagement Mockup Bar */}
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-around text-xs text-slate-500 font-medium">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsLiked(!isLiked);
+                    setLikesCount((prev) => (isLiked ? prev - 1 : prev + 1));
+                  }}
+                  className={`flex items-center gap-1.5 py-1 px-3 rounded-md transition-colors ${
+                    isLiked
+                      ? 'text-blue-600 font-bold bg-blue-50'
+                      : 'hover:text-blue-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <span>👍</span>
+                  <span>{isLiked ? 'Curtiu' : 'Curtir'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsCommentBoxOpen(!isCommentBoxOpen)}
+                  className={`flex items-center gap-1.5 py-1 px-3 rounded-md transition-colors ${
+                    isCommentBoxOpen
+                      ? 'text-blue-600 font-bold bg-blue-50'
+                      : 'hover:text-blue-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <span>💬</span>
+                  <span>Comentar ({comments.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const textToShare = sampleVariationText || (currentPreviewSource ? resolveSpintax(currentPreviewSource.content) : '');
+                    navigator.clipboard.writeText(textToShare);
+                    setShareFeedback(true);
+                    setTimeout(() => setShareFeedback(false), 2500);
+                  }}
+                  className="flex items-center gap-1.5 py-1 px-3 rounded-md hover:text-blue-600 hover:bg-slate-50 transition-colors"
+                >
+                  <span>↗</span>
+                  <span>{shareFeedback ? 'Texto Copiado!' : 'Compartilhar'}</span>
+                </button>
+              </div>
+
+              {/* Interactive Comments Drawer */}
+              {isCommentBoxOpen && (
+                <div className="pt-3 border-t border-slate-100 space-y-2 bg-slate-50/70 p-3 rounded-xl">
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {comments.map((cmt, idx) => (
+                      <div key={idx} className="bg-white p-2 rounded-lg border border-slate-200 text-xs flex items-start gap-2">
+                        <div className="w-6 h-6 rounded-full bg-slate-200 flex-shrink-0 flex items-center justify-center font-bold text-[10px] text-slate-600">
+                          U{idx + 1}
+                        </div>
+                        <div className="flex-1">
+                          <span className="font-semibold text-slate-800 text-[11px] block">Membro do Grupo</span>
+                          <span className="text-slate-600 text-xs">{cmt}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Add comment form */}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!commentInput.trim()) return;
+                      setComments([...comments, commentInput.trim()]);
+                      setCommentInput('');
+                    }}
+                    className="flex gap-1.5 pt-1"
+                  >
+                    <input
+                      type="text"
+                      placeholder="Escreva um comentário simulado..."
+                      value={commentInput}
+                      onChange={(e) => setCommentInput(e.target.value)}
+                      className="flex-1 px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <button
+                      type="submit"
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                    >
+                      Enviar
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
 
             {/* Spintax Samples Inspector */}

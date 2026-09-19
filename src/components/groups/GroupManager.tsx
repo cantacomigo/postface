@@ -238,6 +238,19 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
             >
               {editingCategory ? 'Atualizar' : 'Salvar Categoria'}
             </button>
+            {editingCategory && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingCategory(null);
+                  setNewCatName('');
+                  setNewCatDesc('');
+                }}
+                className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded-lg"
+              >
+                Cancelar
+              </button>
+            )}
           </form>
 
           {/* Categories Pill list */}
@@ -259,15 +272,35 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                       <p className="text-[11px] text-slate-500">{count} grupos associados</p>
                     </div>
                   </div>
-                  {categories.length > 1 && (
+                  <div className="flex items-center gap-1">
                     <button
-                      onClick={() => onDeleteCategory(cat.id)}
-                      className="text-slate-400 hover:text-red-600 p-1"
-                      title="Excluir Categoria"
+                      type="button"
+                      onClick={() => {
+                        setEditingCategory(cat);
+                        setNewCatName(cat.name);
+                        setNewCatColor(cat.color);
+                        setNewCatDesc(cat.description || '');
+                      }}
+                      className="text-slate-400 hover:text-blue-600 p-1"
+                      title="Editar Categoria"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Edit2 className="w-3.5 h-3.5" />
                     </button>
-                  )}
+                    {categories.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (confirm(`Excluir a categoria "${cat.name}"?`)) {
+                            onDeleteCategory(cat.id);
+                          }
+                        }}
+                        className="text-slate-400 hover:text-red-600 p-1"
+                        title="Excluir Categoria"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}

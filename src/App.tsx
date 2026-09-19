@@ -201,35 +201,81 @@ export default function App() {
             antiBanRules={antiBanRules}
             campaign={campaign}
             logs={logs}
-            onStartCampaign={() => {
-              const eligible = groups.filter((g) => g.status === 'active');
-              if (eligible.length === 0) {
-                alert('Nenhum grupo ativo disponível.');
+            onStartCampaign={(tplId, catId) => {
+              const targetTemplateId = tplId || campaign.templateId || templates[0]?.id;
+              const targetGroups = groups.filter((g) => {
+                const matchesActive = g.status === 'active';
+                const matchesCategory = !catId || catId === 'all' || g.categoryId === catId;
+                return matchesActive && matchesCategory;
+              });
+
+              if (targetGroups.length === 0) {
+                alert('Nenhum grupo ativo disponível com os filtros selecionados.');
                 return;
               }
+
+              const selectedTpl = templates.find((t) => t.id === targetTemplateId) || templates[0];
+
               setCampaign({
                 ...campaign,
                 status: 'running',
-                selectedGroupIds: eligible.map((g) => g.id),
-                totalGroups: eligible.length,
+                templateId: targetTemplateId,
+                selectedGroupIds: targetGroups.map((g) => g.id),
+                totalGroups: targetGroups.length,
                 currentIndex: 0,
-                nextPostCountdown: 180,
-                currentPhaseText: `Iniciando disparo com o primeiro grupo: ${eligible[0]?.name}...`
+                successCount: 0,
+                failedCount: 0,
+                postsInCurrentBatch: 0,
+                nextPostCountdown: 12,
+                currentPhaseText: `Iniciando disparo com o primeiro grupo: "${targetGroups[0]?.name}"...`
+              });
+
+              handleAddLog({
+                id: `log-${Date.now()}`,
+                timestamp: new Date().toLocaleTimeString('pt-BR'),
+                groupId: targetGroups[0]?.id || '',
+                groupName: targetGroups[0]?.name || 'Início via Popup',
+                templateId: selectedTpl.id,
+                templateTitle: selectedTpl.title,
+                status: 'paused_batch',
+                details: `Disparo acionado via Popup da Extensão com ${targetGroups.length} grupos em fila.`,
+                resolvedText: '',
+                delayWaitedSeconds: 0
               });
             }}
             onPauseCampaign={() => {
-              setCampaign({
-                ...campaign,
+              setCampaign((prev) => ({
+                ...prev,
                 status: 'paused',
                 currentPhaseText: 'Pausado via popup da extensão.'
-              });
+              }));
             }}
             onResumeCampaign={() => {
-              setCampaign({
-                ...campaign,
+              setCampaign((prev) => ({
+                ...prev,
                 status: 'running',
                 currentPhaseText: 'Retomado via popup da extensão.'
-              });
+              }));
+            }}
+            onStopCampaign={() => {
+              setCampaign((prev) => ({
+                ...prev,
+                status: 'aborted',
+                currentPhaseText: 'Campanha finalizada via popup da extensão.',
+                completedAt: new Date().toISOString()
+              }));
+            }}
+            onSkipWait={() => {
+              setCampaign((prev) => ({
+                ...prev,
+                nextPostCountdown: 1
+              }));
+            }}
+            onSelectTemplate={(tplId) => {
+              setCampaign((prev) => ({
+                ...prev,
+                templateId: tplId
+              }));
             }}
             onOpenFullDashboard={() => setActiveTab('campaign')}
           />
