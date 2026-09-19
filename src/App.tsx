@@ -72,6 +72,20 @@ export default function App() {
     saveStoredData('LOGS', logs);
   }, [logs]);
 
+  // Listener para sincronização automática via Extensão Chrome ou Script de Console
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (
+        (event.data?.type === 'FB_AUTOPAGE_SYNC_GROUPS' || event.data?.type === 'FB_SYNC_GROUPS_RESULT') &&
+        Array.isArray(event.data.groups)
+      ) {
+        handleBulkAddGroups(event.data.groups);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
   // Handlers for templates
   const handleSaveTemplate = (tpl: PostTemplate) => {
     setTemplates((prev) => {

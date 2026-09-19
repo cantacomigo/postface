@@ -263,7 +263,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true; // Retorno assíncrono
   }
+
+  if (request.action === 'EXTRACT_JOINED_GROUPS') {
+    extractUserJoinedGroups()
+      .then((groups) => sendResponse({ success: true, groups }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
 });
+
+async function extractUserJoinedGroups() {
+  window.scrollTo(0, document.body.scrollHeight);
+  await sleep(1500);
+
+  const links = Array.from(document.querySelectorAll('a[href*="/groups/"]'));
+  const foundMap = new Map();
+
+  for (const a of links) {
+    const rawHref = a.href.split('?')[0].replace(/\/$/, '');
+    const parts = rawHref.split('/groups/')[1];
+    if (!parts) continue;
+    const slug = parts.split('/')[0];
+    if (['joins', 'feed', 'discover', 'create', 'notifications'].includes(slug)) continue;
+
+    const groupUrl = 'https://www.facebook.com/groups/' + slug;
+    const name = (a.innerText || '').trim().replace(/\n+/g, ' ');
+    if (name && name.length >= 2 && !name.toLowerCase().includes('participar') && !foundMap.has(groupUrl)) {
+      foundMap.set(groupUrl, {
+        name,
+        url: groupUrl,
+        fbId: slug,
+        privacy: 'public'
+      });
+    }
+  }
+
+  return Array.from(foundMap.values());
+}
 
 async function runPostWorkflow({ template, group }) {
   // 1. Verificação preventiva de avisos de restrição na conta
