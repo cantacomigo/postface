@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   PostTemplate,
   FacebookGroup,
@@ -78,6 +78,23 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
   const [isExtensionDetected, setIsExtensionDetected] = useState<boolean>(false);
   const [showInstallerModal, setShowInstallerModal] = useState<boolean>(false);
 
+  // Tarefa autônoma atual em execução
+  const [currentAutonomousTask, setCurrentAutonomousTask] = useState<{
+    group: FacebookGroup;
+    template: PostTemplate;
+    resolvedText: string;
+  } | null>(null);
+  const currentAutonomousTaskRef = useRef<{
+    group: FacebookGroup;
+    template: PostTemplate;
+    resolvedText: string;
+  } | null>(null);
+  useEffect(() => {
+    currentAutonomousTaskRef.current = currentAutonomousTask;
+  }, [currentAutonomousTask]);
+
+  const confirmPostRef = useRef<(group: FacebookGroup, template: PostTemplate, resolvedText: string) => void>(() => {});
+
   // Escuta status e respostas da Extensão do Chrome via bridge
   useEffect(() => {
     const handleBridgeMessage = (event: MessageEvent) => {
@@ -86,6 +103,20 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
         event.data?.source === 'AUTOPPOST_CHROME_EXTENSION'
       ) {
         setIsExtensionDetected(true);
+      }
+
+      if (event.data?.source === 'AUTOPPOST_CHROME_EXTENSION') {
+        const bgPayload = event.data?.payload;
+        if (
+          (bgPayload?.action === 'POST_COMPLETED' || bgPayload?.type === 'POST_SUCCESS') &&
+          currentAutonomousTaskRef.current
+        ) {
+          const task = currentAutonomousTaskRef.current;
+          setIsAutonomousExecuting(false);
+          setAutonomousPhaseText('');
+          setCurrentAutonomousTask(null);
+          confirmPostRef.current?.(task.group, task.template, task.resolvedText);
+        }
       }
     };
     window.addEventListener('message', handleBridgeMessage);
@@ -236,121 +267,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
     return Math.floor(min + Math.random() * (max - min));
   }
 
-  // Active Timer Loop Effect
-  useEffect(() => {
-    if (campaign.status !== 'running') return;
-    if (activePromptGroup) return; // Do not decrement while waiting for current post confirmation
-    if (isAutonomousExecuting) return; // Do not decrement while robot is actively posting
-
-    if (campaign.nextPostCountdown <= 0) return;
-
-    const timer = setInterval(() => {
-      onUpdateCampaign({
-        ...campaign,
-        nextPostCountdown: Math.max(0, campaign.nextPostCountdown - 1)
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup, isAutonomousExecuting]);
-
-  // Trigger dispatch when countdown hits 0
-  useEffect(() => {
-    if (campaign.status !== 'running') return;
-    if (campaign.nextPostCountdown > 0) return;
-    if (activePromptGroup) return; // Already prompted
-    if (isAutonomousExecuting) return; // Already executing
-
-    const currentGroup = groups.find(
-      (g) => g.id === campaign.selectedGroupIds[campaign.currentIndex]
-    );
-
-    if (!currentGroup) {
-      onUpdateCampaign({
-        ...campaign,
-        status: 'completed',
-        currentPhaseText: 'Todas as postagens da fila foram concluídas com sucesso!',
-        completedAt: new Date().toISOString()
-      });
-      return;
-    }
-
-    const template = templates.find((t) => t.id === campaign.templateId) || templates[0];
-    const resolvedPostContent = resolveSpintax(template.content);
-
-    // Auto copy resolved text to clipboard
-    try {
-      navigator.clipboard.writeText(resolvedPostContent);
-      setCopiedTextNotice(true);
-      setTimeout(() => setCopiedTextNotice(false), 4000);
-    } catch (e) {
-      console.warn('Clipboard write error', e);
-    }
-
-    if (postingMode === 'autonomous') {
-      // 🤖 MODO 100% AUTÔNOMO: O robô faz tudo sozinho!
-      setIsAutonomousExecuting(true);
-      setAutonomousPhaseText(`Navegando até o grupo: "${currentGroup.name}"...`);
-
-      // Se permitido, abre a aba do grupo para a extensão operar
-      if (autoOpenTab) {
-        try {
-          window.open(currentGroup.url, '_blank');
-        } catch (e) {
-          console.warn('Window open blocked', e);
-        }
-      }
-
-      // Envia comando para o bridge da Extensão do Chrome
-      window.postMessage({
-        source: 'AUTOPPOST_WEB_DASHBOARD',
-        action: 'EXECUTE_POST',
-        payload: {
-          group: currentGroup,
-          template,
-          resolvedText: resolvedPostContent
-        }
-      }, '*');
-
-      const t1 = setTimeout(() => {
-        setAutonomousPhaseText(`Gerando Spintax única e simulando digitação humana...`);
-      }, 1500);
-
-      const t2 = setTimeout(() => {
-        setAutonomousPhaseText(`Localizando compositor e acionando botão "Publicar"...`);
-      }, 3000);
-
-      const t3 = setTimeout(() => {
-        setIsAutonomousExecuting(false);
-        setAutonomousPhaseText('');
-        handleConfirmPost(currentGroup, template, resolvedPostContent);
-      }, 4800);
-
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-        clearTimeout(t3);
-      };
-    } else {
-      // Auto open group tab in browser if enabled
-      if (autoOpenTab) {
-        try {
-          window.open(currentGroup.url, '_blank');
-        } catch (e) {
-          console.warn('Window open blocked', e);
-        }
-      }
-
-      // Modo assistente manual: ativa modal de confirmação
-      setActivePromptGroup({
-        group: currentGroup,
-        template,
-        resolvedText: resolvedPostContent
-      });
-    }
-  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup, isAutonomousExecuting, postingMode, autoOpenTab]);
-
-  // User confirms they posted to Facebook
+  // User confirms they posted to Facebook (ou robô confirmou)
   const handleConfirmPost = (group: FacebookGroup, template: PostTemplate, resolvedText: string) => {
     // Add genuine log pointing to the real group URL
     const logItem: CampaignLog = {
@@ -376,6 +293,9 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
     const isEndOfBatch = newBatchCount >= antiBanRules.blockBatchSize;
 
     setActivePromptGroup(null);
+    setCurrentAutonomousTask(null);
+    setIsAutonomousExecuting(false);
+    setAutonomousPhaseText('');
 
     if (nextIndex >= campaign.selectedGroupIds.length) {
       onUpdateCampaign({
@@ -437,6 +357,141 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
       });
     }
   };
+
+  useEffect(() => {
+    confirmPostRef.current = handleConfirmPost;
+  });
+
+  // Active Timer Loop Effect
+  useEffect(() => {
+    if (campaign.status !== 'running') return;
+    if (activePromptGroup) return; // Do not decrement while waiting for current post confirmation
+    if (isAutonomousExecuting) return; // Do not decrement while robot is actively posting
+
+    if (campaign.nextPostCountdown <= 0) return;
+
+    const timer = setInterval(() => {
+      onUpdateCampaign({
+        ...campaign,
+        nextPostCountdown: Math.max(0, campaign.nextPostCountdown - 1)
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup, isAutonomousExecuting]);
+
+  // Trigger dispatch when countdown hits 0
+  useEffect(() => {
+    if (campaign.status !== 'running') return;
+    if (campaign.nextPostCountdown > 0) return;
+    if (activePromptGroup) return; // Already prompted
+    if (isAutonomousExecuting) return; // Already executing
+
+    const currentGroup = groups.find(
+      (g) => g.id === campaign.selectedGroupIds[campaign.currentIndex]
+    );
+
+    if (!currentGroup) {
+      onUpdateCampaign({
+        ...campaign,
+        status: 'completed',
+        currentPhaseText: 'Todas as postagens da fila foram concluídas com sucesso!',
+        completedAt: new Date().toISOString()
+      });
+      return;
+    }
+
+    const template = templates.find((t) => t.id === campaign.templateId) || templates[0];
+    const resolvedPostContent = resolveSpintax(template.content);
+
+    // Auto copy resolved text to clipboard
+    try {
+      navigator.clipboard.writeText(resolvedPostContent);
+      setCopiedTextNotice(true);
+      setTimeout(() => setCopiedTextNotice(false), 4000);
+    } catch (e) {
+      console.warn('Clipboard write error', e);
+    }
+
+    if (postingMode === 'autonomous') {
+      // 🤖 MODO 100% AUTÔNOMO: O robô faz tudo sozinho!
+      setIsAutonomousExecuting(true);
+      const activeTask = {
+        group: currentGroup,
+        template,
+        resolvedText: resolvedPostContent
+      };
+      setCurrentAutonomousTask(activeTask);
+      setAutonomousPhaseText(`Navegando e abrindo aba do grupo: "${currentGroup.name}"...`);
+
+      // Se permitido, abre a aba do grupo para a extensão operar
+      if (autoOpenTab) {
+        try {
+          window.open(currentGroup.url, '_blank');
+        } catch (e) {
+          console.warn('Window open blocked', e);
+        }
+      }
+
+      // Envia comando para o bridge da Extensão do Chrome
+      window.postMessage({
+        source: 'AUTOPPOST_WEB_DASHBOARD',
+        action: 'EXECUTE_POST',
+        payload: {
+          group: currentGroup,
+          template,
+          resolvedText: resolvedPostContent
+        }
+      }, '*');
+
+      const t1 = setTimeout(() => {
+        setAutonomousPhaseText(`Aguardando carregamento da aba e localizando campo de postagem no Facebook...`);
+      }, 3000);
+
+      const t2 = setTimeout(() => {
+        setAutonomousPhaseText(`Injetando texto do anúncio com Spintax anti-bloqueio...`);
+      }, 6500);
+
+      const t3 = setTimeout(() => {
+        setAutonomousPhaseText(`Localizando e acionando botão "Publicar" no Facebook...`);
+      }, 10500);
+
+      const t4 = setTimeout(() => {
+        setAutonomousPhaseText(`Concluindo publicação e gravando log de auditoria...`);
+      }, 15000);
+
+      const t5 = setTimeout(() => {
+        setIsAutonomousExecuting(false);
+        setAutonomousPhaseText('');
+        setCurrentAutonomousTask(null);
+        handleConfirmPost(currentGroup, template, resolvedPostContent);
+      }, 18000);
+
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
+        clearTimeout(t5);
+      };
+    } else {
+      // Auto open group tab in browser if enabled
+      if (autoOpenTab) {
+        try {
+          window.open(currentGroup.url, '_blank');
+        } catch (e) {
+          console.warn('Window open blocked', e);
+        }
+      }
+
+      // Modo assistente manual: ativa modal de confirmação
+      setActivePromptGroup({
+        group: currentGroup,
+        template,
+        resolvedText: resolvedPostContent
+      });
+    }
+  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup, isAutonomousExecuting, postingMode, autoOpenTab]);
 
   // User chooses to skip current group
   const handleSkipGroup = (group: FacebookGroup, template: PostTemplate) => {
@@ -1148,6 +1203,100 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Real-time Autonomous In-Flight Card */}
+      {isAutonomousExecuting && currentAutonomousTask && (
+        <div className="bg-slate-900 border-2 border-emerald-500 rounded-2xl p-5 shadow-2xl space-y-4 text-white">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                <Zap className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block">
+                  Robô 100% Autônomo em Ação no Facebook
+                </span>
+                <h4 className="text-sm font-bold text-white truncate max-w-sm sm:max-w-md">
+                  {currentAutonomousTask.group.name}
+                </h4>
+              </div>
+            </div>
+            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              Executando...
+            </span>
+          </div>
+
+          {/* Etapa atual com barra animada */}
+          <div className="p-3.5 bg-slate-800/90 rounded-xl border border-slate-700/80 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="font-semibold text-slate-200">{autonomousPhaseText}</span>
+              </div>
+              <span className="text-[11px] text-slate-400 font-mono">Automático</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500 rounded-full animate-pulse w-3/4 transition-all duration-500" />
+            </div>
+          </div>
+
+          {/* Status e Ações Manuais Rápidas (Garante que nunca fica travado) */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <div className="flex items-center gap-2 text-xs text-slate-300">
+              <Chrome className="w-4 h-4 text-emerald-400" />
+              <span>
+                {isExtensionDetected
+                  ? 'Extensão v2.5 ativa no Chrome • Postando sem intervenção'
+                  : 'Aba do Facebook aberta • O robô avança automaticamente'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    navigator.clipboard.writeText(currentAutonomousTask.resolvedText);
+                    setCopiedTextNotice(true);
+                    setTimeout(() => setCopiedTextNotice(false), 3000);
+                  } catch (e) {}
+                }}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Copiar texto gerado com Spintax"
+              >
+                <Copy className="w-3.5 h-3.5 text-blue-400" />
+                <span>{copiedTextNotice ? 'Copiado!' : 'Copiar Texto'}</span>
+              </button>
+
+              <a
+                href={currentAutonomousTask.group.url}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Ir para Aba</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const task = currentAutonomousTask;
+                  setIsAutonomousExecuting(false);
+                  setAutonomousPhaseText('');
+                  setCurrentAutonomousTask(null);
+                  handleConfirmPost(task.group, task.template, task.resolvedText);
+                }}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-md"
+              >
+                <Check className="w-4 h-4" />
+                <span>Avançar Imediatamente</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Active Post Prompt Modal / Action Card */}
       {activePromptGroup && (
