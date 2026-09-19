@@ -27,9 +27,14 @@ import {
   Send,
   Download,
   Copy,
-  Check
+  Check,
+  Chrome,
+  Zap,
+  Bot
 } from 'lucide-react';
 import { resolveSpintax } from '../../utils/spintax';
+import { downloadExtensionZip } from '../../utils/extensionPackage';
+import { ExtensionInstallerModal } from './ExtensionInstallerModal';
 
 interface ChromePopupSimulatorProps {
   templates: PostTemplate[];
@@ -80,6 +85,39 @@ export const ChromePopupSimulator: React.FC<ChromePopupSimulatorProps> = ({
 
   // Interactive Tab 4 (Storage) state
   const [copiedStorage, setCopiedStorage] = useState<boolean>(false);
+
+  // Real Extension State
+  const [downloadingZip, setDownloadingZip] = useState<boolean>(false);
+  const [zipDownloaded, setZipDownloaded] = useState<boolean>(false);
+  const [showInstallerModal, setShowInstallerModal] = useState<boolean>(false);
+  const [isExtensionDetected, setIsExtensionDetected] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    const handleBridgeMessage = (event: MessageEvent) => {
+      if (
+        event.data?.type === 'AUTOPPOST_EXTENSION_CONNECTED' ||
+        event.data?.source === 'AUTOPPOST_CHROME_EXTENSION'
+      ) {
+        setIsExtensionDetected(true);
+      }
+    };
+    window.addEventListener('message', handleBridgeMessage);
+    window.postMessage({ source: 'AUTOPPOST_WEB_DASHBOARD', action: 'PING_EXTENSION' }, '*');
+    return () => window.removeEventListener('message', handleBridgeMessage);
+  }, []);
+
+  const handleDownloadZip = async () => {
+    try {
+      setDownloadingZip(true);
+      await downloadExtensionZip();
+      setZipDownloaded(true);
+      setTimeout(() => setZipDownloaded(false), 3000);
+    } catch (err) {
+      console.error('Erro ao gerar extensão:', err);
+    } finally {
+      setDownloadingZip(false);
+    }
+  };
 
   const selectedTemplate =
     templates.find((t) => t.id === popupSelectedTemplateId) || templates[0];
@@ -169,6 +207,65 @@ export const ChromePopupSimulator: React.FC<ChromePopupSimulatorProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Real Extension Download & Installation Card */}
+      <div className="bg-gradient-to-r from-blue-900 via-slate-900 to-indigo-950 p-5 rounded-2xl border border-blue-800/60 text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-400 shrink-0">
+            <Chrome className="w-7 h-7" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-white">
+                Extensão Real do Chrome (Manifest V3 Pronta)
+              </h3>
+              {isExtensionDetected ? (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Instalada e Conectada ao Painel
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  Pronta para Instalação no Chrome
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-300 mt-1">
+              Baixe o pacote zip com o <code>manifest.json</code>, <code>service-worker.js</code> e <code>fb-automator.js</code> para automação 100% autônoma no Facebook sem intervenção manual.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={handleDownloadZip}
+            disabled={downloadingZip}
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer"
+          >
+            {zipDownloaded ? (
+              <>
+                <Check className="w-4 h-4 text-emerald-300" />
+                <span>Extensão Baixada!</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                <span>{downloadingZip ? 'Gerando...' : 'Baixar Extensão (.ZIP)'}</span>
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowInstallerModal(true)}
+            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 font-bold text-xs rounded-xl flex items-center gap-2 transition-all cursor-pointer"
+          >
+            <Chrome className="w-4 h-4 text-blue-400" />
+            <span>Guia Passo a Passo no Chrome</span>
+          </button>
+        </div>
+      </div>
+
       {/* Header explanation */}
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -699,6 +796,19 @@ export const ChromePopupSimulator: React.FC<ChromePopupSimulatorProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Extension Installer Modal */}
+      <ExtensionInstallerModal
+        isOpen={showInstallerModal}
+        onClose={() => setShowInstallerModal(false)}
+        isExtensionDetected={isExtensionDetected}
+        onCheckExtensionStatus={() => {
+          window.postMessage({ source: 'AUTOPPOST_WEB_DASHBOARD', action: 'PING_EXTENSION' }, '*');
+        }}
+        onActivateFullAutonomousMode={() => {
+          setShowInstallerModal(false);
+        }}
+      />
     </div>
   );
 };

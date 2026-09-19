@@ -588,5 +588,29 @@ export function calculateNextDelay(currentPostIndex, config) {
     reason: \`Delay com Jitter Gaussiano (\${standardDelay}s).\`
   };
 }`
+  },
+  {
+    filename: 'spintax-engine.js',
+    language: 'javascript',
+    path: 'utils/spintax-engine.js',
+    description: 'Motor Spintax: resolve variações dinâmicas de texto {Opção 1|Opção 2|Opção 3} gerando mensagens únicas.',
+    code: `/**
+ * Spintax Engine para a Extensão AutoPost FB
+ * Resolve sintaxe dinâmica {Opção 1|Opção 2|Opção 3}
+ */
+export function resolveSpintax(text) {
+  if (!text) return '';
+  const regex = /\\{([^{}]+)\\}/g;
+  let resolved = text;
+  let matches;
+  while ((matches = regex.exec(resolved)) !== null) {
+    const fullMatch = matches[0];
+    const options = matches[1].split('|');
+    const chosen = options[Math.floor(Math.random() * options.length)];
+    resolved = resolved.replace(fullMatch, chosen.trim());
+    regex.lastIndex = 0;
+  }
+  return resolved;
+}`
   }
 ];

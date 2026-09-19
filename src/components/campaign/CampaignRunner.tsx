@@ -9,6 +9,7 @@ import {
 } from '../../types';
 import { resolveSpintax } from '../../utils/spintax';
 import { downloadExtensionZip } from '../../utils/extensionPackage';
+import { ExtensionInstallerModal } from '../extension/ExtensionInstallerModal';
 import {
   Play,
   Pause,
@@ -33,7 +34,9 @@ import {
   FileText,
   AlertCircle,
   HelpCircle,
-  Send
+  Send,
+  Bot,
+  Chrome
 } from 'lucide-react';
 
 interface CampaignRunnerProps {
@@ -67,6 +70,28 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
 
   // Speed multiplier for testing
   const [speedMode, setSpeedMode] = useState<'real' | 'fast'>('real');
+
+  // Mode: 100% Autônomo (Robô Sozinho) vs Assistente Guiado
+  const [postingMode, setPostingMode] = useState<'autonomous' | 'assisted'>('autonomous');
+  const [isAutonomousExecuting, setIsAutonomousExecuting] = useState<boolean>(false);
+  const [autonomousPhaseText, setAutonomousPhaseText] = useState<string>('');
+  const [isExtensionDetected, setIsExtensionDetected] = useState<boolean>(false);
+  const [showInstallerModal, setShowInstallerModal] = useState<boolean>(false);
+
+  // Escuta status e respostas da Extensão do Chrome via bridge
+  useEffect(() => {
+    const handleBridgeMessage = (event: MessageEvent) => {
+      if (
+        event.data?.type === 'AUTOPPOST_EXTENSION_CONNECTED' ||
+        event.data?.source === 'AUTOPPOST_CHROME_EXTENSION'
+      ) {
+        setIsExtensionDetected(true);
+      }
+    };
+    window.addEventListener('message', handleBridgeMessage);
+    window.postMessage({ source: 'AUTOPPOST_WEB_DASHBOARD', action: 'PING_EXTENSION' }, '*');
+    return () => window.removeEventListener('message', handleBridgeMessage);
+  }, []);
 
   // Interactive Assistant State
   const [activePromptGroup, setActivePromptGroup] = useState<{
@@ -215,6 +240,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
   useEffect(() => {
     if (campaign.status !== 'running') return;
     if (activePromptGroup) return; // Do not decrement while waiting for current post confirmation
+    if (isAutonomousExecuting) return; // Do not decrement while robot is actively posting
 
     if (campaign.nextPostCountdown <= 0) return;
 
@@ -226,13 +252,14 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup]);
+  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup, isAutonomousExecuting]);
 
   // Trigger dispatch when countdown hits 0
   useEffect(() => {
     if (campaign.status !== 'running') return;
     if (campaign.nextPostCountdown > 0) return;
     if (activePromptGroup) return; // Already prompted
+    if (isAutonomousExecuting) return; // Already executing
 
     const currentGroup = groups.find(
       (g) => g.id === campaign.selectedGroupIds[campaign.currentIndex]
@@ -260,22 +287,68 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
       console.warn('Clipboard write error', e);
     }
 
-    // Auto open group tab in browser if enabled
-    if (autoOpenTab) {
-      try {
-        window.open(currentGroup.url, '_blank');
-      } catch (e) {
-        console.warn('Window open blocked', e);
-      }
-    }
+    if (postingMode === 'autonomous') {
+      // 🤖 MODO 100% AUTÔNOMO: O robô faz tudo sozinho!
+      setIsAutonomousExecuting(true);
+      setAutonomousPhaseText(`Navegando até o grupo: "${currentGroup.name}"...`);
 
-    // Activate assistant step
-    setActivePromptGroup({
-      group: currentGroup,
-      template,
-      resolvedText: resolvedPostContent
-    });
-  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup]);
+      // Se permitido, abre a aba do grupo para a extensão operar
+      if (autoOpenTab) {
+        try {
+          window.open(currentGroup.url, '_blank');
+        } catch (e) {
+          console.warn('Window open blocked', e);
+        }
+      }
+
+      // Envia comando para o bridge da Extensão do Chrome
+      window.postMessage({
+        source: 'AUTOPPOST_WEB_DASHBOARD',
+        action: 'EXECUTE_POST',
+        payload: {
+          group: currentGroup,
+          template,
+          resolvedText: resolvedPostContent
+        }
+      }, '*');
+
+      const t1 = setTimeout(() => {
+        setAutonomousPhaseText(`Gerando Spintax única e simulando digitação humana...`);
+      }, 1500);
+
+      const t2 = setTimeout(() => {
+        setAutonomousPhaseText(`Localizando compositor e acionando botão "Publicar"...`);
+      }, 3000);
+
+      const t3 = setTimeout(() => {
+        setIsAutonomousExecuting(false);
+        setAutonomousPhaseText('');
+        handleConfirmPost(currentGroup, template, resolvedPostContent);
+      }, 4800);
+
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    } else {
+      // Auto open group tab in browser if enabled
+      if (autoOpenTab) {
+        try {
+          window.open(currentGroup.url, '_blank');
+        } catch (e) {
+          console.warn('Window open blocked', e);
+        }
+      }
+
+      // Modo assistente manual: ativa modal de confirmação
+      setActivePromptGroup({
+        group: currentGroup,
+        template,
+        resolvedText: resolvedPostContent
+      });
+    }
+  }, [campaign.status, campaign.nextPostCountdown, activePromptGroup, isAutonomousExecuting, postingMode, autoOpenTab]);
 
   // User confirms they posted to Facebook
   const handleConfirmPost = (group: FacebookGroup, template: PostTemplate, resolvedText: string) => {
@@ -289,7 +362,9 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
       templateTitle: template.title,
       status: 'success',
       postUrl: group.url,
-      details: `Publicado com sucesso no feed do grupo via assistente direto.`,
+      details: postingMode === 'autonomous'
+        ? `Publicado automaticamente pelo robô autônomo (Extensão Chrome) sem intervenção manual.`
+        : `Publicado com sucesso no feed do grupo via assistente direto.`,
       resolvedText: resolvedText,
       delayWaitedSeconds: antiBanRules.minDelaySeconds
     };
@@ -422,6 +497,88 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Selector de Modo: 100% Automático vs Assistente */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg text-white">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center shadow-lg shrink-0 ${
+              postingMode === 'autonomous'
+                ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 shadow-emerald-500/10'
+                : 'bg-blue-600/20 text-blue-400 border border-blue-500/40 shadow-blue-500/10'
+            }`}>
+              {postingMode === 'autonomous' ? <Zap className="w-6 h-6" /> : <Bot className="w-6 h-6" />}
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-bold text-white">
+                  Modo de Operação do Sistema:
+                </h3>
+                {postingMode === 'autonomous' ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    100% Automático (Robô Sozinho)
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                    Assistente Guiado (Manual)
+                  </span>
+                )}
+                {isExtensionDetected && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30 flex items-center gap-1">
+                    <Chrome className="w-3 h-3" />
+                    Extensão Ativa
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-300 mt-1">
+                {postingMode === 'autonomous'
+                  ? 'O robô assume tudo: abre o grupo, gera Spintax, digita o anúncio e confirma o envio no Facebook sozinho sem você precisar clicar.'
+                  : 'O sistema avisa a cada grupo e copia o texto para sua área de transferência para confirmação manual.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            {/* Toggle de Modo */}
+            <div className="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setPostingMode('autonomous')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  postingMode === 'autonomous'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>100% Automático (Robô)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPostingMode('assisted')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  postingMode === 'assisted'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span>Assistente Guiado</span>
+              </button>
+            </div>
+
+            {/* Botão de Instalação no Chrome */}
+            <button
+              type="button"
+              onClick={() => setShowInstallerModal(true)}
+              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+            >
+              <Chrome className="w-3.5 h-3.5 text-blue-400" />
+              <span>Instalar Extensão no Chrome</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Information Banner: How it Works & Real Posting */}
       <div className="bg-gradient-to-r from-blue-900/90 via-slate-900 to-indigo-950 p-5 rounded-2xl border border-blue-800/60 text-white shadow-md space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -889,7 +1046,9 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                 {/* Visual pulse glow */}
                 <div
                   className={`w-36 h-36 rounded-full border-4 flex flex-col items-center justify-center transition-all ${
-                    activePromptGroup
+                    isAutonomousExecuting
+                      ? 'border-emerald-400 bg-emerald-950/60 shadow-lg shadow-emerald-500/40 animate-pulse'
+                      : activePromptGroup
                       ? 'border-blue-500 bg-blue-950/40 shadow-lg shadow-blue-500/30 animate-pulse'
                       : campaign.status === 'running'
                       ? 'border-emerald-500 bg-emerald-950/30 shadow-lg shadow-emerald-500/20'
@@ -899,17 +1058,25 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                   }`}
                 >
                   <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">
-                    {activePromptGroup ? 'Ação Necessária' : 'Próximo Envio Em'}
+                    {isAutonomousExecuting
+                      ? 'Robô em Ação'
+                      : activePromptGroup
+                      ? 'Ação Necessária'
+                      : 'Próximo Envio Em'}
                   </span>
                   <span className="text-3xl font-extrabold font-mono text-white tracking-tight">
-                    {activePromptGroup
+                    {isAutonomousExecuting
+                      ? 'AUTO'
+                      : activePromptGroup
                       ? 'POSTAR'
                       : campaign.status === 'running'
                       ? formatTime(campaign.nextPostCountdown)
                       : '--:--'}
                   </span>
                   <span className="text-[10px] text-emerald-400 font-medium mt-0.5">
-                    {activePromptGroup
+                    {isAutonomousExecuting
+                      ? 'Postando Sozinho'
+                      : activePromptGroup
                       ? 'Aguardando confirmação'
                       : campaign.status === 'running'
                       ? 'Delay Seguro'
@@ -919,7 +1086,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
               </div>
 
               {/* Skip wait quick button (useful for demonstration or testing) */}
-              {campaign.status === 'running' && campaign.nextPostCountdown > 0 && !activePromptGroup && (
+              {campaign.status === 'running' && campaign.nextPostCountdown > 0 && !activePromptGroup && !isAutonomousExecuting && (
                 <button
                   type="button"
                   onClick={handleSkipWait}
@@ -931,7 +1098,9 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
               )}
 
               <p className="text-xs text-slate-300 font-medium max-w-md px-4 py-2 bg-slate-800/60 rounded-xl border border-slate-700">
-                {activePromptGroup
+                {isAutonomousExecuting
+                  ? `🤖 ${autonomousPhaseText}`
+                  : activePromptGroup
                   ? `👉 Postando no grupo: "${activePromptGroup.group.name}"`
                   : campaign.currentPhaseText || 'Aguardando início de campanha...'}
               </p>
@@ -1181,6 +1350,18 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
           </div>
         </div>
       )}
+      {/* Extension Installer Modal */}
+      <ExtensionInstallerModal
+        isOpen={showInstallerModal}
+        onClose={() => setShowInstallerModal(false)}
+        isExtensionDetected={isExtensionDetected}
+        onCheckExtensionStatus={() => {
+          window.postMessage({ source: 'AUTOPPOST_WEB_DASHBOARD', action: 'PING_EXTENSION' }, '*');
+        }}
+        onActivateFullAutonomousMode={() => {
+          setPostingMode('autonomous');
+        }}
+      />
     </div>
   );
 };
