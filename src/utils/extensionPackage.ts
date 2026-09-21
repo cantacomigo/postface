@@ -41,14 +41,18 @@ function generateIconBase64(size: number): string {
   return 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 }
 
-export async function downloadExtensionZip(): Promise<void> {
-  const zip = new JSZip();
+export function getGeneratedExtensionFiles(): Record<string, string> {
+  // Retorna todos os arquivos que compõem o pacote da extensão
+  // Definidos abaixo
+  return buildExtensionFilesMap();
+}
 
+function buildExtensionFilesMap(): Record<string, string> {
   // 1. MANIFEST V3
   const MANIFEST_V3_JSON = `{
   "manifest_version": 3,
   "name": "AutoPost FB - Extensão Anti-Ban (Robô Autônomo)",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "description": "Automação 100% autônoma de postagens em grupos do Facebook operando na sessão ativa do navegador com motor de proteção anti-bloqueio.",
   "permissions": [
     "tabs",
@@ -566,7 +570,7 @@ async function findAndClickComposerTrigger() {
       'publicar no grupo',
       'iniciar discussão',
       'write something',
-      'what\\'s on your mind',
+      'on your mind',
       'create a public post'
     ];
 
@@ -681,7 +685,7 @@ async function findEditorArea() {
         '[aria-label*="No que você está pensando" i]',
         '[aria-label*="Create a public post" i]',
         '[aria-label*="Write something" i]',
-        '[aria-label*="What\'s on your mind" i]',
+        '[aria-label*="on your mind" i]',
         'div[role="textbox"][contenteditable="true"]',
         '[contenteditable="true"][role="textbox"]',
         'div[data-lexical-editor="true"]',
@@ -1529,7 +1533,7 @@ COMO INSTALAR NO SEU GOOGLE CHROME (3 PASSOS RÁPIDOS):
 3. CARREGUE OU ATUALIZE A EXTENSÃO:
    - Se já tinha a versão anterior: clique em "Remover" na versão antiga ou no ícone de atualizar.
    - Clique em "Carregar sem compactação" e selecione a pasta descompactada.
-   - Pronto! A versão 2.8 estará ativa no seu Chrome.
+   - Pronto! A versão 2.9 estará ativa no seu Chrome.
 
 REQUISITOS IMPORTANTES:
 - Mantenha o Facebook logado na sua conta no Google Chrome.
@@ -1537,20 +1541,30 @@ REQUISITOS IMPORTANTES:
 =====================================================
 `;
 
-  // Montagem do ZIP
-  zip.file('manifest.json', MANIFEST_V3_JSON);
-  zip.file('background/service-worker.js', SERVICE_WORKER_CODE);
-  zip.file('content-scripts/bridge.js', BRIDGE_JS_CODE);
-  zip.file('content-scripts/fb-automator.js', FB_AUTOMATOR_CODE);
-  zip.file('content-scripts/checkpoint-watcher.js', CHECKPOINT_WATCHER_CODE);
-  zip.file('utils/spintax-engine.js', SPINTAX_ENGINE_CODE);
-  zip.file('popup/popup.html', ARCHITECTURE_FILES.find(f => f.filename === 'popup.html')?.code || '');
-  zip.file('popup/popup.js', POPUP_JS_CODE);
-  zip.file('popup/popup.css', POPUP_CSS_CODE);
-  zip.file('storage/local-database.js', ARCHITECTURE_FILES.find(f => f.filename === 'local-database.js')?.code || '');
-  zip.file('utils/anti-ban-timing.js', ARCHITECTURE_FILES.find(f => f.filename === 'anti-ban-timing.js')?.code || '');
-  zip.file('LEIA-ME_COMO_INSTALAR.txt', README_TXT);
-  zip.file('como_instalar_passo_a_passo.html', GUIA_HTML_CODE);
+  return {
+    'manifest.json': MANIFEST_V3_JSON,
+    'background/service-worker.js': SERVICE_WORKER_CODE,
+    'content-scripts/bridge.js': BRIDGE_JS_CODE,
+    'content-scripts/fb-automator.js': FB_AUTOMATOR_CODE,
+    'content-scripts/checkpoint-watcher.js': CHECKPOINT_WATCHER_CODE,
+    'utils/spintax-engine.js': SPINTAX_ENGINE_CODE,
+    'popup/popup.html': ARCHITECTURE_FILES.find(f => f.filename === 'popup.html')?.code || '',
+    'popup/popup.js': POPUP_JS_CODE,
+    'popup/popup.css': POPUP_CSS_CODE,
+    'storage/local-database.js': (ARCHITECTURE_FILES.find(f => f.filename === 'local-database.js')?.code || '').replace(/^export\s+/gm, ''),
+    'utils/anti-ban-timing.js': (ARCHITECTURE_FILES.find(f => f.filename === 'anti-ban-timing.js')?.code || '').replace(/^export\s+/gm, ''),
+    'LEIA-ME_COMO_INSTALAR.txt': README_TXT,
+    'como_instalar_passo_a_passo.html': GUIA_HTML_CODE,
+  };
+}
+
+export async function downloadExtensionZip(): Promise<void> {
+  const zip = new JSZip();
+  const filesMap = buildExtensionFilesMap();
+
+  Object.entries(filesMap).forEach(([name, content]) => {
+    zip.file(name, content);
+  });
 
   // Generate binary PNG icons
   zip.file('icons/icon16.png', generateIconBase64(16), { base64: true });
@@ -1562,7 +1576,7 @@ REQUISITOS IMPORTANTES:
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'autopost-fb-extensao-v2.8.zip';
+  a.download = 'autopost-fb-extensao-v2.9.zip';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

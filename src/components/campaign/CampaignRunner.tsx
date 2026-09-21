@@ -680,7 +680,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                   className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
                   <Chrome className="w-3.5 h-3.5" />
-                  <span>1. Instalar Extensão v2.8</span>
+                  <span>1. Instalar Extensão v2.9</span>
                 </button>
 
                 <button
@@ -1608,19 +1608,19 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
 
             <div className="p-6 space-y-4 text-xs text-slate-300">
               <p className="leading-relaxed">
-                Você clicou em <strong>Iniciar Campanha</strong> com o modo <strong>100% Automático</strong> ativado, mas a <strong>Extensão AutoPost FB v2.8</strong> ainda não está instalada no seu Google Chrome. Por segurança do navegador, nenhuma página web pode entrar em outra aba e digitar no Facebook sem a extensão autorizada.
+                Você clicou em <strong>Iniciar Campanha</strong> com o modo <strong>100% Automático</strong> ativado, mas a <strong>Extensão AutoPost FB v2.9</strong> ainda não está instalada no seu Google Chrome. Por segurança do navegador, nenhuma página web pode entrar em outra aba e digitar no Facebook sem a extensão autorizada.
               </p>
 
               <div className="space-y-3 pt-1">
-                {/* Opção 1: Instalar a Extensão v2.8 */}
+                {/* Opção 1: Instalar a Extensão v2.9 */}
                 <div className="bg-slate-800/80 border border-blue-500/30 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div className="space-y-1">
                     <span className="font-bold text-xs text-blue-300 flex items-center gap-1.5">
                       <Chrome className="w-3.5 h-3.5" />
-                      Opção 1: Ativar Extensão v2.8 no Chrome (30 segundos)
+                      Opção 1: Ativar Extensão v2.9 no Chrome (30 segundos)
                     </span>
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Baixe o arquivo ZIP da versão 2.8 e carregue em <code>chrome://extensions</code> no Modo Desenvolvedor.
+                      Baixe o arquivo ZIP da versão 2.9 e carregue em <code>chrome://extensions</code> no Modo Desenvolvedor.
                     </p>
                   </div>
                   <button
