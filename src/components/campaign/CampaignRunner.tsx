@@ -1247,7 +1247,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
               <Chrome className="w-4 h-4 text-emerald-400" />
               <span>
                 {isExtensionDetected
-                  ? 'Extensão v2.6 ativa no Chrome • Postando sem intervenção'
+                  ? 'Extensão v2.7 ativa no Chrome • Postando sem intervenção'
                   : 'Aba do Facebook aberta • O robô avança automaticamente'}
               </span>
             </div>

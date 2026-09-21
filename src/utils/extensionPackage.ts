@@ -48,7 +48,7 @@ export async function downloadExtensionZip(): Promise<void> {
   const MANIFEST_V3_JSON = `{
   "manifest_version": 3,
   "name": "AutoPost FB - Extensão Anti-Ban (Robô Autônomo)",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "Automação 100% autônoma de postagens em grupos do Facebook operando na sessão ativa do navegador com motor de proteção anti-bloqueio.",
   "permissions": [
     "tabs",
@@ -111,7 +111,7 @@ export async function downloadExtensionZip(): Promise<void> {
     window.postMessage({
       source: 'AUTOPPOST_CHROME_EXTENSION',
       type: 'AUTOPPOST_EXTENSION_CONNECTED',
-      version: '2.5.0',
+      version: '2.7.0',
       status: 'active',
       timestamp: Date.now()
     }, '*');
@@ -165,19 +165,52 @@ export async function downloadExtensionZip(): Promise<void> {
 
   // 3. FB AUTOMATOR CONTENT SCRIPT (DOM Automation on Facebook)
   const FB_AUTOMATOR_CODE = `/**
- * Content Script: Injetado na página do Grupo do Facebook
+ * Content Script: Injetado na página do Grupo do Facebook (v2.7.0)
  * Encontra a caixa de publicação, digita com variação humana e confirma envio.
+ * Possui isolamento estrito de URL para evitar conflito entre abas do Facebook.
  */
 
 let isWorkflowRunning = false;
 
+// Função utilitária para verificar se a aba atual é exatamente o grupo alvo da tarefa
+function isTargetGroup(task) {
+  if (!task || !task.group || !task.group.url) return true;
+  const currentUrl = window.location.href;
+  const targetUrl = task.group.url;
+
+  function getGroupId(u) {
+    if (!u) return '';
+    const m = u.match(/groups\\/([^\\/\\?\\#]+)/i);
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  const targetGid = getGroupId(targetUrl);
+  const currentGid = getGroupId(currentUrl);
+  if (targetGid && currentGid) {
+    return targetGid === currentGid;
+  }
+
+  function cleanUrl(u) {
+    return (u || '').replace(/^https?:\\/\\//, '').replace(/^www\\./, '').replace(/\\/$/, '').toLowerCase();
+  }
+  const cleanTarget = cleanUrl(targetUrl);
+  const cleanCurrent = cleanUrl(currentUrl);
+  return cleanCurrent.includes(cleanTarget) || cleanTarget.includes(cleanCurrent);
+}
+
 // 1. Ouvinte de mensagens diretas do background/dashboard
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'EXECUTE_POST') {
-    runPostWorkflow(request.payload)
-      .then((res) => sendResponse({ success: true, ...res }))
-      .catch((err) => sendResponse({ success: false, error: err.message }));
-    return true; // async
+    if (isTargetGroup(request.payload)) {
+      runPostWorkflow(request.payload)
+        .then((res) => sendResponse({ success: true, ...res }))
+        .catch((err) => sendResponse({ success: false, error: err.message }));
+      return true; // async
+    } else {
+      console.log('[AutoPost FB] Ignorando tarefa nesta aba pois o grupo alvo é outro:', request.payload?.group?.name);
+      sendResponse({ ignored: true, reason: 'not_target_group' });
+      return false;
+    }
   }
 
   if (request.action === 'EXTRACT_JOINED_GROUPS') {
@@ -188,16 +221,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// 2. Ouvinte em tempo real de alterações no storage (aciona assim que a tarefa é gravada)
+// 2. Ouvinte em tempo real de alterações no storage (aciona SOMENTE se esta aba for o grupo alvo!)
 try {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === 'local' && changes.activeTask && changes.activeTask.newValue) {
       const task = changes.activeTask.newValue;
-      if (task.status === 'pending' && !isWorkflowRunning) {
-        console.log('[AutoPost FB] Nova tarefa detectada via storage.onChanged!');
+      if (!isWorkflowRunning && isTargetGroup(task)) {
+        console.log('[AutoPost FB] Tarefa do grupo atual detectada via storage.onChanged!');
         task.status = 'processing';
         chrome.storage.local.set({ activeTask: task }).catch(() => {});
-        setTimeout(() => runPostWorkflow(task), 1000);
+        setTimeout(() => runPostWorkflow(task), 600);
       }
     }
   });
@@ -206,16 +239,20 @@ try {
 // 3. Verificação periódica ao carregar a página do Facebook (Lê fila pendente do Storage)
 async function checkPendingTaskOnLoad() {
   if (isWorkflowRunning) return;
+  // Só executa verificação de post se estiver em página de grupo do Facebook
+  if (!window.location.href.includes('/groups/')) return;
+
   try {
     const data = await chrome.storage.local.get(['activeTask']);
-    if (data.activeTask && (data.activeTask.status === 'pending' || data.activeTask.status === 'queued')) {
-      const age = Date.now() - (data.activeTask.timestamp || 0);
-      // Se a tarefa foi solicitada há menos de 5 minutos e estamos no Facebook
-      if (age < 300000 && window.location.href.includes('facebook.com')) {
-        console.log('[AutoPost FB] Tarefa pendente detectada via storage local! Iniciando robô...');
-        data.activeTask.status = 'processing';
-        await chrome.storage.local.set({ activeTask: data.activeTask });
-        runPostWorkflow(data.activeTask);
+    if (data.activeTask) {
+      const task = data.activeTask;
+      const age = Date.now() - (task.timestamp || 0);
+      // Se a tarefa foi solicitada nos últimos 5 minutos E esta aba é o grupo alvo
+      if (age < 300000 && isTargetGroup(task)) {
+        console.log('[AutoPost FB] Tarefa pendente confirmada para este grupo no carregamento! Iniciando robô...');
+        task.status = 'processing';
+        await chrome.storage.local.set({ activeTask: task });
+        runPostWorkflow(task);
       }
     }
   } catch (err) {
@@ -225,6 +262,67 @@ async function checkPendingTaskOnLoad() {
 
 // Inicializa verificação progressiva para garantir detecção em conexões rápidas ou lentas
 [800, 2000, 4500, 8000, 12000].forEach((delay) => setTimeout(checkPendingTaskOnLoad, delay));
+
+// 4. Widget Flutuante de Assistência em Páginas de Grupo do Facebook
+function renderGroupAssistantWidget() {
+  if (!window.location.href.includes('/groups/')) return;
+  let widget = document.getElementById('autopost-fb-group-widget');
+  if (widget) return;
+
+  widget = document.createElement('div');
+  widget.id = 'autopost-fb-group-widget';
+  widget.style.cssText = [
+    'position: fixed',
+    'bottom: 24px',
+    'right: 24px',
+    'z-index: 2147483640',
+    'background: #0f172a',
+    'color: #f8fafc',
+    'padding: 10px 18px',
+    'border-radius: 9999px',
+    'box-shadow: 0 10px 30px rgba(0,0,0,0.6)',
+    'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    'font-size: 12px',
+    'font-weight: 600',
+    'display: flex',
+    'align-items: center',
+    'gap: 12px',
+    'border: 1.5px solid #3b82f6',
+    'user-select: none'
+  ].join(';');
+
+  widget.innerHTML = \`
+    <span style="display:inline-block; width:9px; height:9px; background:#22c55e; border-radius:50%; box-shadow: 0 0 8px #22c55e;"></span>
+    <span style="letter-spacing:0.3px;">AutoPost FB • Robô Pronto</span>
+    <button id="autopost-fb-instant-btn" style="background:#2563eb; color:#fff; border:none; padding:5px 12px; border-radius:20px; font-size:11px; font-weight:700; cursor:pointer; transition:all 0.2s ease;">
+      ▶ Postar Agora
+    </button>
+  \`;
+
+  document.body.appendChild(widget);
+
+  const btn = document.getElementById('autopost-fb-instant-btn');
+  if (btn) {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      btn.innerText = '⏳ Postando...';
+      try {
+        const storageData = await chrome.storage.local.get(['activeTask']);
+        const task = storageData.activeTask || {
+          group: { name: document.title, url: window.location.href },
+          resolvedText: ''
+        };
+        await runPostWorkflow(task);
+        btn.innerText = '✅ Postado!';
+        setTimeout(() => { btn.innerText = '▶ Postar Agora'; }, 4000);
+      } catch (err) {
+        btn.innerText = '⚠️ Tentar Novamente';
+        setTimeout(() => { btn.innerText = '▶ Postar Agora'; }, 4000);
+      }
+    });
+  }
+}
+setTimeout(renderGroupAssistantWidget, 2500);
 
 // BANNER VISUAL FLUTUANTE NA PÁGINA DO FACEBOOK
 function showStatusBanner(message, type = 'info') {
@@ -382,6 +480,9 @@ async function findAndClickComposerTrigger() {
   const startTime = Date.now();
   const maxWaitMs = 25000;
 
+  // Garante que o topo da página do grupo esteja visível
+  try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
+
   while (Date.now() - startTime < maxWaitMs) {
     // Se o modal de edição ou campo editável já estiver aberto na tela, retorna true!
     if (document.querySelector('div[role="dialog"] div[role="textbox"]') ||
@@ -391,37 +492,67 @@ async function findAndClickComposerTrigger() {
       return true;
     }
 
-    // Palavras-chave do compositor de grupos do Facebook (PT-BR, EN, variações de layout)
+    // A. Procura direta por seletores nativos de compositores de Grupo do Facebook
+    const directSelectors = [
+      'div[data-pagelet*="Composer"]',
+      'div[data-pagelet*="InlineComposer"]',
+      '[aria-label*="Crie um post público" i]',
+      '[aria-label*="Escreva algo" i]',
+      '[aria-label*="No que você está pensando" i]',
+      '[aria-label*="Criar publicação" i]',
+      '[aria-label*="Create a public post" i]',
+      '[aria-label*="Write something" i]'
+    ];
+
+    for (const sel of directSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
+        showStatusBanner('Abrindo compositor de publicação...', 'info');
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await sleep(400);
+
+        // Dispara cliques no elemento e nos elementos clicáveis internos
+        simulateUserClick(el);
+        const innerBtn = el.querySelector('[role="button"], [tabindex="0"]') || el;
+        simulateUserClick(innerBtn);
+
+        await sleep(1500);
+        if (document.querySelector('div[role="dialog"]') || document.querySelector('div[contenteditable="true"]')) {
+          console.log('[AutoPost FB] Compositor aberto via seletor direto!');
+          return true;
+        }
+      }
+    }
+
+    // B. Procura por nós de texto na página ("Escreva algo...", "No que você está pensando...")
     const keywords = [
       'escreva algo',
       'no que você está pensando',
       'criar publicação',
       'crie uma publicação',
+      'crie um post público',
       'fazer publicação',
       'publicar no grupo',
-      'vender algo',
       'iniciar discussão',
-      'conversa',
       'write something',
       'what\\'s on your mind',
       'create a public post'
     ];
 
-    // 1. Procura através de TreeWalker em todos os nós de texto da página
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let textNode;
     const candidates = [];
     while ((textNode = walker.nextNode())) {
       const val = (textNode.nodeValue || '').trim().toLowerCase();
       if (val && keywords.some(k => val.includes(k))) {
-        if (textNode.parentElement) {
+        if (textNode.parentElement && textNode.parentElement.offsetWidth > 0) {
           candidates.push(textNode.parentElement);
         }
       }
     }
 
     if (candidates.length > 0) {
-      // Ordena pelo nó com menos filhos (mais profundo/específico)
+      // Ordena pelos nós mais profundos e específicos
       candidates.sort((a, b) => a.getElementsByTagName('*').length - b.getElementsByTagName('*').length);
       const chosen = candidates[0];
 
@@ -433,57 +564,47 @@ async function findAndClickComposerTrigger() {
 
       showStatusBanner('Abrindo compositor de publicação...', 'info');
       clickable.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await sleep(600);
+      await sleep(500);
 
+      // Dispara sequência de cliques multinível
       simulateUserClick(chosen);
+      simulateUserClick(chosen.parentElement);
+      if (chosen.parentElement?.parentElement) {
+        simulateUserClick(chosen.parentElement.parentElement);
+      }
       simulateUserClick(clickable);
+
+      // Tenta simular pressionar Enter para abrir caso seja input focado
+      try {
+        clickable.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+      } catch (e) {}
 
       // Aguarda até 2.5s para ver se o modal abriu
       for (let w = 0; w < 5; w++) {
         await sleep(500);
-        if (document.querySelector('div[role="dialog"]')) {
+        if (document.querySelector('div[role="dialog"]') || document.querySelector('div[contenteditable="true"]')) {
           console.log('[AutoPost FB] Modal aberto via clique de texto!');
           return true;
         }
       }
     }
 
-    // 2. Procura por aria-labels
-    const ariaSelectors = [
-      '[aria-label*="Escreva algo" i]',
-      '[aria-label*="No que você está pensando" i]',
-      '[aria-label*="Criar publicação" i]',
-      '[aria-label*="Crie uma publicação" i]',
-      '[aria-label*="Create a public post" i]',
-      '[aria-label*="Write something" i]'
-    ];
-    for (const sel of ariaSelectors) {
-      const el = document.querySelector(sel);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        await sleep(500);
-        simulateUserClick(el);
-        await sleep(1500);
-        if (document.querySelector('div[role="dialog"]')) return true;
-      }
-    }
-
-    // 3. Procura por botões dentro do feed
+    // C. Procura botões com role="button" cujo texto coincida
     const buttons = Array.from(document.querySelectorAll('div[role="button"]'));
     for (const btn of buttons) {
       const txt = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-      if (keywords.some(k => txt.includes(k))) {
+      if (keywords.some(k => txt === k || txt.startsWith(k))) {
         btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        await sleep(500);
+        await sleep(400);
         simulateUserClick(btn);
-        await sleep(1500);
+        await sleep(1200);
         if (document.querySelector('div[role="dialog"]')) return true;
       }
     }
 
     // Rola a página suavemente caso o compositor esteja ligeiramente abaixo
-    window.scrollBy({ top: 150, behavior: 'smooth' });
-    await sleep(1000);
+    window.scrollBy({ top: 120, behavior: 'smooth' });
+    await sleep(800);
   }
 
   return false;
@@ -892,17 +1013,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.set({ activeTask: task }, async () => {
       try {
         const groupUrl = payload.group?.url || '';
+        function getGroupId(u) {
+          if (!u) return '';
+          const m = u.match(/groups\\/([^\\/\\?\\#]+)/i);
+          return m ? m[1].toLowerCase() : '';
+        }
         function cleanUrl(u) {
           return (u || '').replace(/^https?:\\/\\//, '').replace(/^www\\./, '').replace(/\\/$/, '').toLowerCase();
         }
+        const targetGroupId = getGroupId(groupUrl);
         const normTarget = cleanUrl(groupUrl);
         const tabs = await chrome.tabs.query({});
-        let targetTab = tabs.find(t => t.url && normTarget && cleanUrl(t.url).includes(normTarget));
+        let targetTab = tabs.find(t => {
+          const u = t.url || t.pendingUrl || '';
+          if (targetGroupId && getGroupId(u) === targetGroupId) return true;
+          return normTarget && cleanUrl(u).includes(normTarget);
+        });
 
         if (!targetTab) {
           targetTab = await chrome.tabs.create({ url: groupUrl, active: true });
           await waitForTabComplete(targetTab.id, 25000);
-          await new Promise(r => setTimeout(r, 3000));
+          await new Promise(r => setTimeout(r, 2500));
         } else {
           chrome.tabs.update(targetTab.id, { active: true });
         }
@@ -910,7 +1041,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendTabMessageWithRetry(targetTab.id, {
           action: 'EXECUTE_POST',
           payload: task
-        }, 8, 1500)
+        }, 12, 1500)
         .then(res => sendResponse(res || { success: true }))
         .catch(err => {
           console.log('[AutoPost Background] Aba acionada via storage fallback');
@@ -1349,7 +1480,7 @@ h1 { font-size: 15px; font-weight: 700; color: #fff; }
 
   // 9. LEIA-ME TEXTO
   const README_TXT = `=====================================================
-AutoPost FB - Extensão Anti-Ban v2.6 (Google Chrome)
+AutoPost FB - Extensão Anti-Ban v2.7 (Google Chrome)
 MODO 100% AUTÔNOMO COM HUD VISUAL EM TEMPO REAL
 =====================================================
 
@@ -1367,7 +1498,7 @@ COMO INSTALAR NO SEU GOOGLE CHROME (3 PASSOS RÁPIDOS):
 3. CARREGUE OU ATUALIZE A EXTENSÃO:
    - Se já tinha a versão anterior: remova-a ou clique no ícone de "Atualizar" (círculo com seta).
    - Para instalar: clique em "Carregar sem compactação" e selecione a pasta descompactada.
-   - Pronto! A versão 2.6 estará ativa no seu Chrome.
+   - Pronto! A versão 2.7 estará ativa no seu Chrome.
 
 REQUISITOS IMPORTANTES:
 - Mantenha o Facebook logado na sua conta no Google Chrome.
@@ -1400,7 +1531,7 @@ REQUISITOS IMPORTANTES:
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'autopost-fb-extensao-v2.6.zip';
+  a.download = 'autopost-fb-extensao-v2.7.zip';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
