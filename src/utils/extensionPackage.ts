@@ -52,7 +52,7 @@ function buildExtensionFilesMap(): Record<string, string> {
   const MANIFEST_V3_JSON = `{
   "manifest_version": 3,
   "name": "AutoPost FB - Extensão Anti-Ban (Robô Autônomo)",
-  "version": "2.9.0",
+  "version": "3.0.0",
   "description": "Automação 100% autônoma de postagens em grupos do Facebook operando na sessão ativa do navegador com motor de proteção anti-bloqueio.",
   "permissions": [
     "tabs",
@@ -114,7 +114,7 @@ function buildExtensionFilesMap(): Record<string, string> {
 
   // 2. BRIDGE CONTENT SCRIPT
   const BRIDGE_JS_CODE = `/**
- * Bridge Content Script: Conecta o Painel Web diretamente à Extensão do Chrome (v2.8.0)
+ * Bridge Content Script: Conecta o Painel Web diretamente à Extensão do Chrome (v3.0.0)
  * Suporta execução em abas normais e dentro de iframes (ex: Google AI Studio).
  */
 (function() {
@@ -122,7 +122,7 @@ function buildExtensionFilesMap(): Record<string, string> {
     const payload = {
       source: 'AUTOPPOST_CHROME_EXTENSION',
       type: 'AUTOPPOST_EXTENSION_CONNECTED',
-      version: '2.8.0',
+      version: '3.0.0',
       status: 'active',
       timestamp: Date.now()
     };
@@ -193,12 +193,12 @@ function buildExtensionFilesMap(): Record<string, string> {
 
   // 3. FB AUTOMATOR CONTENT SCRIPT (DOM Automation on Facebook)
   const FB_AUTOMATOR_CODE = `/**
- * Content Script: Injetado na página do Grupo do Facebook (v2.8.0)
+ * Content Script: Injetado na página do Grupo do Facebook (v3.0.0)
  * Encontra a caixa de publicação, digita com variação humana e confirma envio.
  * Possui isolamento estrito de URL para evitar conflito entre abas do Facebook.
  */
 
-console.log('%c[AutoPost FB v2.8.0] Robô Ativo na Página do Facebook!', 'background:#2563eb;color:#ffffff;font-weight:bold;font-size:13px;padding:6px 12px;border-radius:6px;');
+console.log('%c[AutoPost FB v3.0.0] Robô Ativo na Página do Facebook!', 'background:#2563eb;color:#ffffff;font-weight:bold;font-size:13px;padding:6px 12px;border-radius:6px;');
 
 let isWorkflowRunning = false;
 
@@ -747,49 +747,37 @@ async function findEditorArea() {
 }
 
 async function insertTextIntoEditor(element, text) {
-  showStatusBanner('Digitando texto do anúncio com Spintax...', 'info');
+  showStatusBanner('Digitando texto do anúncio...', 'info');
 
   element.focus();
   simulateUserClick(element);
-  await sleep(300);
+  await sleep(350);
 
-  // Posiciona o cursor no editor
+  // 1. Limpa qualquer texto residual ou placeholder
   try {
     const sel = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(element);
-    range.collapse(false);
     sel.removeAllRanges();
     sel.addRange(range);
-  } catch (e) {}
-
-  // Seleciona tudo e limpa caso tenha resquício
-  try {
     document.execCommand('selectAll', false, null);
+    document.execCommand('delete', false, null);
   } catch (e) {}
 
-  // Método 1: beforeinput Event
-  try {
-    const inputEvent = new InputEvent('beforeinput', {
-      bubbles: true,
-      cancelable: true,
-      inputType: 'insertText',
-      data: text
-    });
-    element.dispatchEvent(inputEvent);
-  } catch (e) {}
+  await sleep(150);
 
-  // Método 2: execCommand('insertText')
-  let execSuccess = false;
+  // 2. Método Primário: execCommand insertText (padrão ouro para o Lexical do Facebook)
+  let insertionDone = false;
   try {
-    execSuccess = document.execCommand('insertText', false, text);
+    insertionDone = document.execCommand('insertText', false, text);
   } catch (e) {
-    execSuccess = false;
+    insertionDone = false;
   }
 
-  // Método 3: Simulação de Paste com ClipboardEvent e DataTransfer
-  const currentText = (element.innerText || element.textContent || '').trim();
-  if (!execSuccess || currentText.length < 5) {
+  // Verifica se o texto realmente entrou
+  const writtenText = (element.innerText || element.textContent || '').trim();
+  if (!insertionDone || writtenText.length < 2) {
+    // 3. Método Secundário: Paste limpo via ClipboardData
     try {
       const dt = new DataTransfer();
       dt.setData('text/plain', text);
@@ -804,25 +792,26 @@ async function insertTextIntoEditor(element, text) {
     }
   }
 
-  // Método 4: Fallback se ainda nada preencheu
-  if (!(element.innerText || element.textContent || '').trim()) {
-    element.innerHTML = '<p class="xdj266r x11i5rnm xat24cr x1mh8g0r x16tdsg8"><span data-lexical-text="true">' + (text || '') + '</span></p>';
+  // Se ainda estiver vazio, fallback de beforeinput
+  const checkTextAfterPaste = (element.innerText || element.textContent || '').trim();
+  if (checkTextAfterPaste.length < 2) {
+    try {
+      const inputEvent = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: text
+      });
+      element.dispatchEvent(inputEvent);
+    } catch (e) {}
   }
 
-  // Dispara eventos de atualização do React / DOM
+  // 4. Dispara eventos de atualização para o React sincronizar o estado
   element.dispatchEvent(new Event('input', { bubbles: true }));
   element.dispatchEvent(new Event('change', { bubbles: true }));
-  element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+  element.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true }));
 
-  // Desperta observadores do Lexical do Facebook digitando um espaço e apagando
-  try {
-    element.focus();
-    document.execCommand('insertText', false, ' ');
-    await sleep(80);
-    document.execCommand('delete', false, null);
-  } catch (e) {}
-
-  await sleep(1500);
+  await sleep(1200);
 }
 
 async function findAndClickSubmitButton() {
@@ -889,16 +878,13 @@ async function findAndClickSubmitButton() {
         return true;
       } else {
         showStatusBanner('Aguardando Facebook habilitar botão "Postar"...', 'info');
-        // Acorda o editor para o Facebook detectar que há texto digitado
+        // Acorda o editor sem reinserir texto nem truncar
         const ed = activeDialog.querySelector('[contenteditable="true"]') ||
                    activeDialog.querySelector('[role="textbox"]');
         if (ed) {
           try {
-            ed.focus();
-            document.execCommand('insertText', false, ' ');
-            await sleep(60);
-            document.execCommand('delete', false, null);
             ed.dispatchEvent(new Event('input', { bubbles: true }));
+            ed.dispatchEvent(new Event('change', { bubbles: true }));
           } catch (e) {}
         }
       }
@@ -1505,7 +1491,7 @@ h1 { font-size: 15px; font-weight: 700; color: #fff; }
 
   // 9. LEIA-ME TEXTO
   const README_TXT = `=====================================================
-AutoPost FB - Extensão Anti-Ban v2.8 (Google Chrome)
+AutoPost FB - Extensão Anti-Ban v3.0 (Google Chrome)
 MODO 100% AUTÔNOMO COM HUD VISUAL EM TEMPO REAL
 =====================================================
 
@@ -1523,7 +1509,7 @@ COMO INSTALAR NO SEU GOOGLE CHROME (3 PASSOS RÁPIDOS):
 3. CARREGUE OU ATUALIZE A EXTENSÃO:
    - Se já tinha a versão anterior: clique em "Remover" na versão antiga ou no ícone de atualizar.
    - Clique em "Carregar sem compactação" e selecione a pasta descompactada.
-   - Pronto! A versão 2.9 estará ativa no seu Chrome.
+   - Pronto! A versão 3.0 estará ativa no seu Chrome.
 
 REQUISITOS IMPORTANTES:
 - Mantenha o Facebook logado na sua conta no Google Chrome.
@@ -1566,7 +1552,7 @@ export async function downloadExtensionZip(): Promise<void> {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'autopost-fb-extensao-v2.9.zip';
+  a.download = 'autopost-fb-extensao-v3.0.zip';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
