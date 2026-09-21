@@ -519,19 +519,38 @@ async function findAndClickComposerTrigger() {
   try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {}
 
   while (Date.now() - startTime < maxWaitMs) {
-    // Se o modal de edição ou campo editável já estiver aberto na tela, retorna true!
-    if (document.querySelector('div[role="dialog"] div[role="textbox"]') ||
-        document.querySelector('div[role="dialog"] div[contenteditable="true"]') ||
-        document.querySelector('div[role="main"] div[contenteditable="true"]') ||
-        document.querySelector('div[contenteditable="true"][role="textbox"]')) {
+    // Se o modal de criação de publicação principal já estiver aberto na tela, retorna true!
+    const openMainModal = Array.from(document.querySelectorAll('div[role="dialog"], [aria-modal="true"]')).find(d => {
+      const txt = (d.innerText || d.textContent || '').toLowerCase();
+      return (txt.includes('criar post') || txt.includes('crie um post') || txt.includes('criar publicação') || txt.includes('adicionar ao seu post')) &&
+             d.offsetWidth > 0 && d.offsetHeight > 0;
+    });
+    if (openMainModal) {
       return true;
     }
 
-    // A. Procura direta por seletores nativos de compositores de Grupo do Facebook
+    // Helper para certificar que o elemento NÃO pertence a nenhum post/feed/comentário existente
+    function isFeedOrCommentElement(el) {
+      if (!el) return false;
+      // Proíbe elementos dentro de posts do feed
+      if (el.closest('[role="feed"]') || el.closest('[role="article"]') || el.closest('[data-pagelet*="FeedUnit"]') || el.closest('[data-pagelet*="GroupFeed"]')) {
+        return true;
+      }
+      const label = ((el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
+      const txt = (el.innerText || el.textContent || '').toLowerCase();
+      if (label.includes('coment') || txt.includes('escreva um comentário') || txt.includes('write a comment')) {
+        return true;
+      }
+      return false;
+    }
+
+    // A. Procura prioritária: Container oficial de publicação do Grupo (Composer)
     const directSelectors = [
-      'div[data-pagelet*="Composer"]',
+      'div[data-pagelet*="GroupInlineComposer"]',
       'div[data-pagelet*="InlineComposer"]',
+      'div[data-pagelet*="Composer"]',
       '[aria-label*="Crie um post público" i]',
+      '[aria-label*="Escreva algo..." i]',
       '[aria-label*="Escreva algo" i]',
       '[aria-label*="No que você está pensando" i]',
       '[aria-label*="Criar publicação" i]',
@@ -540,35 +559,37 @@ async function findAndClickComposerTrigger() {
     ];
 
     for (const sel of directSelectors) {
-      const el = document.querySelector(sel);
-      if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
-        showStatusBanner('Abrindo compositor de publicação...', 'info');
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        await sleep(400);
+      const foundList = Array.from(document.querySelectorAll(sel));
+      for (const el of foundList) {
+        if (el && el.offsetWidth > 0 && el.offsetHeight > 0 && !isFeedOrCommentElement(el)) {
+          showStatusBanner('Abrindo compositor do grupo...', 'info');
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          await sleep(400);
 
-        // Dispara cliques no elemento e nos elementos clicáveis internos
-        simulateUserClick(el);
-        const innerBtn = el.querySelector('[role="button"], [tabindex="0"]') || el;
-        simulateUserClick(innerBtn);
+          simulateUserClick(el);
+          const innerBtn = el.querySelector('[role="button"], [tabindex="0"]') || el;
+          simulateUserClick(innerBtn);
 
-        await sleep(1500);
-        if (document.querySelector('div[role="dialog"]') || document.querySelector('div[contenteditable="true"]')) {
-          console.log('[AutoPost FB] Compositor aberto via seletor direto!');
-          return true;
+          // Aguarda confirmação de abertura do modal
+          for (let w = 0; w < 6; w++) {
+            await sleep(400);
+            const dialog = document.querySelector('div[role="dialog"]');
+            if (dialog && dialog.offsetWidth > 0) {
+              console.log('[AutoPost FB] Compositor aberto com sucesso via seletor direto!');
+              return true;
+            }
+          }
         }
       }
     }
 
-    // B. Procura por nós de texto na página ("Escreva algo...", "No que você está pensando...")
-    const keywords = [
+    // B. Procura por nós de texto que representam o gatilho de publicação do grupo
+    const validTriggerKeywords = [
       'escreva algo',
       'no que você está pensando',
-      'criar publicação',
-      'crie uma publicação',
       'crie um post público',
-      'fazer publicação',
-      'publicar no grupo',
-      'iniciar discussão',
+      'crie uma publicação',
+      'criar publicação',
       'write something',
       'on your mind',
       'create a public post'
@@ -579,66 +600,64 @@ async function findAndClickComposerTrigger() {
     const candidates = [];
     while ((textNode = walker.nextNode())) {
       const val = (textNode.nodeValue || '').trim().toLowerCase();
-      if (val && keywords.some(k => val.includes(k))) {
-        if (textNode.parentElement && textNode.parentElement.offsetWidth > 0) {
-          candidates.push(textNode.parentElement);
+      // Não pode ser comentário nem resposta
+      if (val.includes('comentário') || val.includes('comment') || val.includes('responder')) continue;
+
+      if (val && validTriggerKeywords.some(k => val === k || val.startsWith(k))) {
+        const parent = textNode.parentElement;
+        if (parent && parent.offsetWidth > 0 && !isFeedOrCommentElement(parent)) {
+          candidates.push(parent);
         }
       }
     }
 
     if (candidates.length > 0) {
-      // Ordena pelos nós mais profundos e específicos
-      candidates.sort((a, b) => a.getElementsByTagName('*').length - b.getElementsByTagName('*').length);
-      const chosen = candidates[0];
+      // Prioriza o elemento mais no topo da página (o compositor fica acima do feed!)
+      candidates.sort((a, b) => {
+        const rectA = a.getBoundingClientRect();
+        const rectB = b.getBoundingClientRect();
+        return rectA.top - rectB.top;
+      });
 
-      // Busca container clicável ou botão
+      const chosen = candidates[0];
       const clickable = chosen.closest('[role="button"]') ||
                         chosen.closest('[tabindex="0"]') ||
                         chosen.parentElement ||
                         chosen;
 
-      showStatusBanner('Abrindo compositor de publicação...', 'info');
+      showStatusBanner('Clicando no campo "Escreva algo..."...', 'info');
       clickable.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await sleep(500);
 
-      // Dispara sequência de cliques multinível
       simulateUserClick(chosen);
-      simulateUserClick(chosen.parentElement);
-      if (chosen.parentElement?.parentElement) {
-        simulateUserClick(chosen.parentElement.parentElement);
-      }
       simulateUserClick(clickable);
 
-      // Tenta simular pressionar Enter para abrir caso seja input focado
-      try {
-        clickable.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-      } catch (e) {}
-
-      // Aguarda até 2.5s para ver se o modal abriu
-      for (let w = 0; w < 5; w++) {
+      // Aguarda até 3s para o modal de post abrir
+      for (let w = 0; w < 6; w++) {
         await sleep(500);
-        if (document.querySelector('div[role="dialog"]') || document.querySelector('div[contenteditable="true"]')) {
-          console.log('[AutoPost FB] Modal aberto via clique de texto!');
+        const dialog = document.querySelector('div[role="dialog"]');
+        if (dialog && dialog.offsetWidth > 0) {
+          console.log('[AutoPost FB] Modal aberto via clique no texto "Escreva algo..."!');
           return true;
         }
       }
     }
 
-    // C. Procura botões com role="button" cujo texto coincida
+    // C. Procura botões fora do feed cujo texto seja exatamente o gatilho
     const buttons = Array.from(document.querySelectorAll('div[role="button"]'));
     for (const btn of buttons) {
+      if (isFeedOrCommentElement(btn)) continue;
       const txt = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-      if (keywords.some(k => txt === k || txt.startsWith(k))) {
+      if (validTriggerKeywords.some(k => txt === k || txt.startsWith(k))) {
         btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
         await sleep(400);
         simulateUserClick(btn);
-        await sleep(1200);
+        await sleep(1500);
         if (document.querySelector('div[role="dialog"]')) return true;
       }
     }
 
-    // Rola a página suavemente caso o compositor esteja ligeiramente abaixo
-    window.scrollBy({ top: 120, behavior: 'smooth' });
+    window.scrollBy({ top: 100, behavior: 'smooth' });
     await sleep(800);
   }
 
@@ -650,34 +669,30 @@ async function findEditorArea() {
   const maxWaitMs = 20000;
 
   while (Date.now() - startTime < maxWaitMs) {
-    // 1. Identifica todos os diálogos/modais abertos no Facebook
+    // 1. Identifica OBRIGATORIAMENTE o modal/diálogo de criação de postagem do Facebook
     const allDialogs = Array.from(document.querySelectorAll('div[role="dialog"], [aria-modal="true"]'));
 
-    // Filtra pelo modal correto de criação de post (excluindo chats de messenger e notificações)
+    // Filtra pelo modal oficial de criação de postagem (NÃO comentário)
     let targetDialog = allDialogs.find(d => {
       const text = (d.innerText || d.textContent || '').toLowerCase();
-      return (
-        text.includes('criar post') ||
-        text.includes('crie um post') ||
-        text.includes('criar publicação') ||
-        text.includes('postar anonimamente') ||
-        text.includes('adicionar ao post') ||
-        text.includes('postar') ||
-        text.includes('publicar')
-      ) && d.offsetWidth > 0 && d.offsetHeight > 0;
-    }) || allDialogs[allDialogs.length - 1] || null;
+      const isNotComment = !text.includes('comentários no post') && !text.includes('responder comentário');
+      const isCreatePost = text.includes('criar post') ||
+                           text.includes('crie um post') ||
+                           text.includes('criar publicação') ||
+                           text.includes('postar anonimamente') ||
+                           text.includes('adicionar ao seu post') ||
+                           text.includes('adicionar ao post') ||
+                           text.includes('publicar no grupo');
+      return isCreatePost && isNotComment && d.offsetWidth > 0 && d.offsetHeight > 0;
+    }) || allDialogs.find(d => d.offsetWidth > 0 && d.offsetHeight > 200) || null;
 
-    // Escopos de busca ordenados por prioridade
-    const candidateRoots = [];
-    if (targetDialog) candidateRoots.push(targetDialog);
-    for (const d of allDialogs) {
-      if (d !== targetDialog && d.offsetWidth > 0 && d.offsetHeight > 0) candidateRoots.push(d);
-    }
-    candidateRoots.push(document);
-
-    for (const root of candidateRoots) {
-      // A. Seletores diretos de editor Lexical / contenteditable do Facebook
+    if (targetDialog) {
+      // A. Seletores diretos dentro do modal
       const directSelectors = [
+        'div[role="textbox"][contenteditable="true"]',
+        '[contenteditable="true"][role="textbox"]',
+        'div[data-lexical-editor="true"]',
+        '[data-lexical-editor="true"]',
         '[aria-label*="Crie um post" i]',
         '[aria-label*="post público" i]',
         '[aria-label*="Criar post" i]',
@@ -686,20 +701,14 @@ async function findEditorArea() {
         '[aria-label*="Create a public post" i]',
         '[aria-label*="Write something" i]',
         '[aria-label*="on your mind" i]',
-        'div[role="textbox"][contenteditable="true"]',
-        '[contenteditable="true"][role="textbox"]',
-        'div[data-lexical-editor="true"]',
-        '[data-lexical-editor="true"]',
-        'div[contenteditable="true"]',
-        '[contenteditable="true"]',
-        'div[role="textbox"]'
+        'div[contenteditable="true"]'
       ];
 
       for (const sel of directSelectors) {
-        const found = root.querySelector(sel);
+        const found = targetDialog.querySelector(sel);
         if (found && found.offsetWidth > 0 && found.offsetHeight > 0) {
-          // Garante que não é a barra de pesquisa do cabeçalho nem um botão
-          if (!found.closest('header') && found.getAttribute('role') !== 'button' && found.getAttribute('role') !== 'searchbox') {
+          // Garante que não é caixa de pesquisa
+          if (found.getAttribute('role') !== 'searchbox') {
             found.scrollIntoView({ behavior: 'smooth', block: 'center' });
             found.focus();
             return found;
@@ -707,7 +716,7 @@ async function findEditorArea() {
         }
       }
 
-      // B. Se ainda não achou por seletor direto, localiza o texto do placeholder (ex: "Crie um post público...") e clica nele para ativar o editor
+      // B. Placeholder dentro do modal de criação de post
       const placeholderKeywords = [
         'crie um post público',
         'crie um post',
@@ -716,23 +725,14 @@ async function findEditorArea() {
         'crie uma publicação'
       ];
 
-      const allElements = Array.from(root.querySelectorAll('span, div, p, label'));
-      for (const el of allElements) {
+      const allSpans = Array.from(targetDialog.querySelectorAll('span, div, p'));
+      for (const el of allSpans) {
         const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
         if (placeholderKeywords.some(k => txt === k || txt.startsWith(k))) {
           simulateUserClick(el);
           await sleep(300);
 
-          if (document.activeElement && (
-            document.activeElement.getAttribute('contenteditable') === 'true' ||
-            document.activeElement.getAttribute('role') === 'textbox'
-          )) {
-            return document.activeElement;
-          }
-
-          const nearbyEditor = el.closest('div[role="textbox"], div[contenteditable="true"]') ||
-                               el.parentElement?.querySelector('[contenteditable="true"], [role="textbox"]') ||
-                               root.querySelector('[contenteditable="true"], [role="textbox"]');
+          const nearbyEditor = targetDialog.querySelector('div[role="textbox"], div[contenteditable="true"]');
           if (nearbyEditor) {
             nearbyEditor.focus();
             return nearbyEditor;
@@ -741,15 +741,7 @@ async function findEditorArea() {
       }
     }
 
-    // C. Fallback: elemento ativo no momento
-    if (document.activeElement && (
-      document.activeElement.getAttribute('contenteditable') === 'true' ||
-      document.activeElement.getAttribute('role') === 'textbox'
-    )) {
-      return document.activeElement;
-    }
-
-    await sleep(400);
+    await sleep(500);
   }
   return null;
 }
@@ -840,48 +832,47 @@ async function findAndClickSubmitButton() {
   const maxWaitMs = 20000;
 
   while (Date.now() - startTime < maxWaitMs) {
-    // Busca em todos os diálogos e no documento
+    // 1. Busca pelo modal oficial de criação de publicação
     const allDialogs = Array.from(document.querySelectorAll('div[role="dialog"], [aria-modal="true"]'));
     let activeDialog = allDialogs.find(d => {
       const txt = (d.innerText || d.textContent || '').toLowerCase();
+      const isNotComment = !txt.includes('comentários no post') && !txt.includes('responder comentário');
       return (txt.includes('criar post') || txt.includes('postar') || txt.includes('publicar')) &&
-             d.offsetWidth > 0 && d.offsetHeight > 0;
-    }) || allDialogs[allDialogs.length - 1] || null;
+             isNotComment && d.offsetWidth > 0 && d.offsetHeight > 0;
+    }) || allDialogs.find(d => d.offsetWidth > 0 && d.offsetHeight > 200) || null;
 
-    const candidateRoots = [];
-    if (activeDialog) candidateRoots.push(activeDialog);
-    candidateRoots.push(document);
+    if (!activeDialog) {
+      await sleep(800);
+      continue;
+    }
 
     let submitBtn = null;
     const submitKeywords = [
-      'postar',
       'publicar',
+      'postar',
       'post',
-      'postar no grupo',
       'publicar no grupo',
-      'compartilhar',
-      'concluir',
-      'avançar'
+      'postar no grupo',
+      'compartilhar'
     ];
 
-    for (const root of candidateRoots) {
-      const allButtons = Array.from(root.querySelectorAll('[role="button"], button'));
-      for (const b of allButtons) {
-        const txt = (b.innerText || b.textContent || '').trim().toLowerCase();
-        const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
-        if (submitKeywords.some(k => txt === k || aria === k || txt.startsWith(k) || aria.startsWith(k))) {
-          submitBtn = b;
-          break;
-        }
-      }
+    const allButtons = Array.from(activeDialog.querySelectorAll('[role="button"], button'));
+    for (const b of allButtons) {
+      // Ignora botões de fechar ou emojis
+      const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+      const txt = (b.innerText || b.textContent || '').trim().toLowerCase();
+      if (aria.includes('fechar') || aria.includes('close') || aria.includes('adicionar') || aria.includes('foto')) continue;
 
-      if (!submitBtn) {
-        submitBtn = root.querySelector(
-          '[aria-label="Postar"], [aria-label="Publicar"], [aria-label="Post"], [aria-label*="Postar" i], [aria-label*="Publicar" i], [aria-label*="Post" i]'
-        );
+      if (submitKeywords.some(k => txt === k || aria === k || txt.startsWith(k) || aria.startsWith(k))) {
+        submitBtn = b;
+        break;
       }
+    }
 
-      if (submitBtn) break;
+    if (!submitBtn) {
+      submitBtn = activeDialog.querySelector(
+        '[aria-label="Postar"], [aria-label="Publicar"], [aria-label="Post"], [aria-label*="Publicar no grupo" i]'
+      );
     }
 
     if (submitBtn) {
@@ -894,14 +885,13 @@ async function findAndClickSubmitButton() {
         submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
         await sleep(500);
         simulateUserClick(submitBtn);
-        console.log('[AutoPost FB] Botão "Postar/Publicar" acionado com sucesso!');
+        console.log('[AutoPost FB] Botão "Postar/Publicar" acionado com sucesso no modal de post!');
         return true;
       } else {
         showStatusBanner('Aguardando Facebook habilitar botão "Postar"...', 'info');
         // Acorda o editor para o Facebook detectar que há texto digitado
-        const ed = document.querySelector('div[role="dialog"] [contenteditable="true"]') ||
-                   document.querySelector('div[role="dialog"] [role="textbox"]') ||
-                   document.querySelector('[contenteditable="true"]');
+        const ed = activeDialog.querySelector('[contenteditable="true"]') ||
+                   activeDialog.querySelector('[role="textbox"]');
         if (ed) {
           try {
             ed.focus();
@@ -1607,21 +1597,55 @@ export function generateInstantConsoleScript(postText: string): string {
     if (typeof el.click === 'function') el.click();
   };
 
-  // 1. Achar "Escreva algo..." ou "No que você está pensando..."
+  // 1. Achar "Escreva algo..." ou "No que você está pensando..." garantindo que não seja comentário
+  function isComment(el) {
+    if (!el) return false;
+    if (el.closest('[role="feed"]') || el.closest('[role="article"]') || el.closest('[data-pagelet*="FeedUnit"]')) return true;
+    const l = ((el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
+    const t = (el.innerText || el.textContent || '').toLowerCase();
+    return l.includes('coment') || t.includes('comentário') || t.includes('comment');
+  }
+
   let trigger = null;
-  const keywords = ['escreva algo', 'no que você está pensando', 'crie um post público', 'criar publicação', 'write something'];
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  let node;
-  while ((node = walker.nextNode())) {
-    const val = (node.nodeValue || '').trim().toLowerCase();
-    if (val && keywords.some(k => val.includes(k))) {
-      trigger = node.parentElement;
-      break;
+  const directComposerSelectors = [
+    'div[data-pagelet*="GroupInlineComposer"]',
+    'div[data-pagelet*="InlineComposer"]',
+    'div[data-pagelet*="Composer"]',
+    '[aria-label*="Crie um post público" i]',
+    '[aria-label*="Escreva algo" i]',
+    '[aria-label*="No que você está pensando" i]'
+  ];
+
+  for (const s of directComposerSelectors) {
+    const list = Array.from(document.querySelectorAll(s));
+    for (const el of list) {
+      if (!isComment(el) && el.offsetWidth > 0 && el.offsetHeight > 0) {
+        trigger = el;
+        break;
+      }
     }
+    if (trigger) break;
   }
 
   if (!trigger) {
-    trigger = document.querySelector('div[data-pagelet*="Composer"], [aria-label*="Crie um post" i], [aria-label*="Escreva algo" i]');
+    const keywords = ['escreva algo', 'no que você está pensando', 'crie um post público', 'criar publicação', 'write something'];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    const candidates = [];
+    while ((node = walker.nextNode())) {
+      const val = (node.nodeValue || '').trim().toLowerCase();
+      if (val.includes('comentário') || val.includes('comment') || val.includes('responder')) continue;
+      if (val && keywords.some(k => val === k || val.startsWith(k))) {
+        const p = node.parentElement;
+        if (p && p.offsetWidth > 0 && !isComment(p)) {
+          candidates.push(p);
+        }
+      }
+    }
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      trigger = candidates[0];
+    }
   }
 
   if (trigger) {
@@ -1629,15 +1653,26 @@ export function generateInstantConsoleScript(postText: string): string {
     trigger.scrollIntoView({ behavior: 'smooth', block: 'center' });
     await sleep(400);
     click(trigger);
-    click(trigger.closest('[role="button"]') || trigger.parentElement);
+    const btn = trigger.closest('[role="button"]') || trigger.parentElement;
+    if (btn) click(btn);
   }
 
-  // 2. Aguarda abrir modal
+  // 2. Aguarda abrir modal oficial de post (não modal de comentário)
   let editor = null;
+  let targetModal = null;
   for (let i = 0; i < 30; i++) {
     await sleep(500);
-    editor = document.querySelector('div[role="dialog"] div[role="textbox"], div[role="dialog"] div[contenteditable="true"], div[data-lexical-editor="true"], div[role="textbox"][contenteditable="true"]');
-    if (editor) break;
+    const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], [aria-modal="true"]'));
+    targetModal = dialogs.find(d => {
+      const t = (d.innerText || d.textContent || '').toLowerCase();
+      return (t.includes('criar post') || t.includes('crie um post') || t.includes('criar publicação') || t.includes('postar')) &&
+             !t.includes('comentários no post') && d.offsetWidth > 0;
+    }) || dialogs.find(d => d.offsetWidth > 0 && d.offsetHeight > 200);
+
+    if (targetModal) {
+      editor = targetModal.querySelector('div[role="textbox"], div[contenteditable="true"]');
+      if (editor) break;
+    }
   }
 
   if (!editor) {
