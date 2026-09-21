@@ -199,7 +199,7 @@ export const ExtensionInstallerModal: React.FC<ExtensionInstallerModalProps> = (
                 Descompactar / Extrair a Pasta
               </h4>
               <p className="text-xs text-slate-400 mt-0.5">
-                Vá até a sua pasta de <strong>Downloads</strong>, clique com o <strong>botão direito</strong> no arquivo baixado <code className="bg-slate-900 text-blue-300 px-1.5 py-0.5 rounded text-[11px]">autopost-fb-extensao-v2.4.zip</code> e selecione <strong className="text-slate-200">"Extrair Tudo"</strong> para criar uma pasta.
+                Vá até a sua pasta de <strong>Downloads</strong>, clique com o <strong>botão direito</strong> no arquivo baixado <code className="bg-slate-900 text-blue-300 px-1.5 py-0.5 rounded text-[11px]">autopost-fb-extensao-v2.8.zip</code> e selecione <strong className="text-slate-200">"Extrair Tudo"</strong> para criar uma pasta.
               </p>
             </div>
           </div>

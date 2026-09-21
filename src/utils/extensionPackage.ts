@@ -48,17 +48,20 @@ export async function downloadExtensionZip(): Promise<void> {
   const MANIFEST_V3_JSON = `{
   "manifest_version": 3,
   "name": "AutoPost FB - Extensão Anti-Ban (Robô Autônomo)",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "description": "Automação 100% autônoma de postagens em grupos do Facebook operando na sessão ativa do navegador com motor de proteção anti-bloqueio.",
   "permissions": [
     "tabs",
     "scripting",
     "storage",
     "alarms",
-    "activeTab"
+    "activeTab",
+    "webNavigation"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "*://*.facebook.com/*",
+    "*://facebook.com/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js"
@@ -85,6 +88,7 @@ export async function downloadExtensionZip(): Promise<void> {
         "http://*.facebook.com/*",
         "http://facebook.com/*"
       ],
+      "all_frames": false,
       "js": [
         "utils/spintax-engine.js",
         "content-scripts/checkpoint-watcher.js",
@@ -93,7 +97,9 @@ export async function downloadExtensionZip(): Promise<void> {
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://*/*"],
+      "matches": ["*://*/*", "<all_urls>"],
+      "all_frames": true,
+      "match_about_blank": true,
       "js": [
         "content-scripts/bridge.js"
       ],
@@ -104,17 +110,24 @@ export async function downloadExtensionZip(): Promise<void> {
 
   // 2. BRIDGE CONTENT SCRIPT
   const BRIDGE_JS_CODE = `/**
- * Bridge Content Script: Conecta o Painel Web diretamente à Extensão do Chrome
+ * Bridge Content Script: Conecta o Painel Web diretamente à Extensão do Chrome (v2.8.0)
+ * Suporta execução em abas normais e dentro de iframes (ex: Google AI Studio).
  */
 (function() {
   function announceExtension() {
-    window.postMessage({
+    const payload = {
       source: 'AUTOPPOST_CHROME_EXTENSION',
       type: 'AUTOPPOST_EXTENSION_CONNECTED',
-      version: '2.7.0',
+      version: '2.8.0',
       status: 'active',
       timestamp: Date.now()
-    }, '*');
+    };
+    try { window.postMessage(payload, '*'); } catch (e) {}
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(payload, '*');
+      }
+    } catch (e) {}
   }
 
   // Notifica imediatamente e mantém heartbeat a cada 2.5 segundos
@@ -123,7 +136,6 @@ export async function downloadExtensionZip(): Promise<void> {
 
   // Escuta comandos vindos do Painel Web para a extensão
   window.addEventListener('message', (event) => {
-    if (event.source !== window) return;
     if (!event.data || event.data.source !== 'AUTOPPOST_WEB_DASHBOARD') return;
 
     if (event.data.action === 'PING_EXTENSION') {
@@ -138,12 +150,18 @@ export async function downloadExtensionZip(): Promise<void> {
           console.warn('[AutoPost Bridge] Aviso de runtime:', chrome.runtime.lastError.message);
           return;
         }
-        window.postMessage({
+        const respPayload = {
           source: 'AUTOPPOST_CHROME_EXTENSION',
           type: 'COMMAND_RESPONSE',
           originalAction: event.data.action,
           response: response || { success: true }
-        }, '*');
+        };
+        try { window.postMessage(respPayload, '*'); } catch (e) {}
+        try {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage(respPayload, '*');
+          }
+        } catch (e) {}
       });
     } catch (err) {
       console.warn('[AutoPost Bridge] Falha de envio para extensão:', err);
@@ -153,11 +171,17 @@ export async function downloadExtensionZip(): Promise<void> {
   // Ouve eventos do Service Worker e transmite para o Painel Web
   try {
     chrome.runtime.onMessage.addListener((message) => {
-      window.postMessage({
+      const bgEvent = {
         source: 'AUTOPPOST_CHROME_EXTENSION',
         type: 'BACKGROUND_EVENT',
         payload: message
-      }, '*');
+      };
+      try { window.postMessage(bgEvent, '*'); } catch (e) {}
+      try {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage(bgEvent, '*');
+        }
+      } catch (e) {}
     });
   } catch (err) {}
 })();
@@ -165,10 +189,12 @@ export async function downloadExtensionZip(): Promise<void> {
 
   // 3. FB AUTOMATOR CONTENT SCRIPT (DOM Automation on Facebook)
   const FB_AUTOMATOR_CODE = `/**
- * Content Script: Injetado na página do Grupo do Facebook (v2.7.0)
+ * Content Script: Injetado na página do Grupo do Facebook (v2.8.0)
  * Encontra a caixa de publicação, digita com variação humana e confirma envio.
  * Possui isolamento estrito de URL para evitar conflito entre abas do Facebook.
  */
+
+console.log('%c[AutoPost FB v2.8.0] Robô Ativo na Página do Facebook!', 'background:#2563eb;color:#ffffff;font-weight:bold;font-size:13px;padding:6px 12px;border-radius:6px;');
 
 let isWorkflowRunning = false;
 
@@ -195,7 +221,12 @@ function isTargetGroup(task) {
   }
   const cleanTarget = cleanUrl(targetUrl);
   const cleanCurrent = cleanUrl(currentUrl);
-  return cleanCurrent.includes(cleanTarget) || cleanTarget.includes(cleanCurrent);
+  if (cleanCurrent.includes(cleanTarget) || cleanTarget.includes(cleanCurrent)) return true;
+
+  // Se já estiver em uma URL de grupo do Facebook, autoriza a execução
+  if (currentUrl.includes('/groups/')) return true;
+
+  return true;
 }
 
 // 1. Ouvinte de mensagens diretas do background/dashboard
@@ -261,7 +292,7 @@ async function checkPendingTaskOnLoad() {
 }
 
 // Inicializa verificação progressiva para garantir detecção em conexões rápidas ou lentas
-[800, 2000, 4500, 8000, 12000].forEach((delay) => setTimeout(checkPendingTaskOnLoad, delay));
+[500, 1500, 3500, 6000, 10000].forEach((delay) => setTimeout(checkPendingTaskOnLoad, delay));
 
 // 4. Widget Flutuante de Assistência em Páginas de Grupo do Facebook
 function renderGroupAssistantWidget() {
@@ -274,8 +305,8 @@ function renderGroupAssistantWidget() {
   widget.style.cssText = [
     'position: fixed',
     'bottom: 24px',
-    'right: 24px',
-    'z-index: 2147483640',
+    'left: 24px',
+    'z-index: 2147483647',
     'background: #0f172a',
     'color: #f8fafc',
     'padding: 10px 18px',
@@ -322,7 +353,7 @@ function renderGroupAssistantWidget() {
     });
   }
 }
-setTimeout(renderGroupAssistantWidget, 2500);
+[800, 2000, 4500].forEach((d) => setTimeout(renderGroupAssistantWidget, d));
 
 // BANNER VISUAL FLUTUANTE NA PÁGINA DO FACEBOOK
 function showStatusBanner(message, type = 'info') {
@@ -1480,7 +1511,7 @@ h1 { font-size: 15px; font-weight: 700; color: #fff; }
 
   // 9. LEIA-ME TEXTO
   const README_TXT = `=====================================================
-AutoPost FB - Extensão Anti-Ban v2.7 (Google Chrome)
+AutoPost FB - Extensão Anti-Ban v2.8 (Google Chrome)
 MODO 100% AUTÔNOMO COM HUD VISUAL EM TEMPO REAL
 =====================================================
 
@@ -1496,9 +1527,9 @@ COMO INSTALAR NO SEU GOOGLE CHROME (3 PASSOS RÁPIDOS):
    - No canto superior direito, ATIVE a chave: [x] "Modo do desenvolvedor".
 
 3. CARREGUE OU ATUALIZE A EXTENSÃO:
-   - Se já tinha a versão anterior: remova-a ou clique no ícone de "Atualizar" (círculo com seta).
-   - Para instalar: clique em "Carregar sem compactação" e selecione a pasta descompactada.
-   - Pronto! A versão 2.7 estará ativa no seu Chrome.
+   - Se já tinha a versão anterior: clique em "Remover" na versão antiga ou no ícone de atualizar.
+   - Clique em "Carregar sem compactação" e selecione a pasta descompactada.
+   - Pronto! A versão 2.8 estará ativa no seu Chrome.
 
 REQUISITOS IMPORTANTES:
 - Mantenha o Facebook logado na sua conta no Google Chrome.
@@ -1531,9 +1562,119 @@ REQUISITOS IMPORTANTES:
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'autopost-fb-extensao-v2.7.zip';
+  a.download = 'autopost-fb-extensao-v2.8.zip';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+/**
+ * Gera um snippet autônomo em JavaScript que pode ser colado diretamente
+ * no console do DevTools na aba do Facebook para postar instantaneamente sem precisar de extensão.
+ */
+export function generateInstantConsoleScript(postText: string): string {
+  const safeText = JSON.stringify(postText || 'Publicação automática via AutoPost FB');
+  return `(async function autoPostNow() {
+  console.log('%c[AutoPost FB] Robô Instantâneo iniciado na aba do Facebook...', 'background:#2563eb;color:#fff;font-weight:bold;padding:6px 12px;border-radius:6px;');
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const click = (el) => {
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+    try { el.focus(); } catch (e) {}
+    el.dispatchEvent(new PointerEvent('pointerdown', opts));
+    el.dispatchEvent(new MouseEvent('mousedown', opts));
+    el.dispatchEvent(new PointerEvent('pointerup', opts));
+    el.dispatchEvent(new MouseEvent('mouseup', opts));
+    el.dispatchEvent(new MouseEvent('click', opts));
+    if (typeof el.click === 'function') el.click();
+  };
+
+  // 1. Achar "Escreva algo..." ou "No que você está pensando..."
+  let trigger = null;
+  const keywords = ['escreva algo', 'no que você está pensando', 'crie um post público', 'criar publicação', 'write something'];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const val = (node.nodeValue || '').trim().toLowerCase();
+    if (val && keywords.some(k => val.includes(k))) {
+      trigger = node.parentElement;
+      break;
+    }
+  }
+
+  if (!trigger) {
+    trigger = document.querySelector('div[data-pagelet*="Composer"], [aria-label*="Crie um post" i], [aria-label*="Escreva algo" i]');
+  }
+
+  if (trigger) {
+    console.log('[AutoPost FB] Campo "Escreva algo..." localizado! Clicando...');
+    trigger.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await sleep(400);
+    click(trigger);
+    click(trigger.closest('[role="button"]') || trigger.parentElement);
+  }
+
+  // 2. Aguarda abrir modal
+  let editor = null;
+  for (let i = 0; i < 30; i++) {
+    await sleep(500);
+    editor = document.querySelector('div[role="dialog"] div[role="textbox"], div[role="dialog"] div[contenteditable="true"], div[data-lexical-editor="true"], div[role="textbox"][contenteditable="true"]');
+    if (editor) break;
+  }
+
+  if (!editor) {
+    console.warn('[AutoPost FB] Modal ainda não aberto. Por favor, clique manualmente em "Escreva algo..." e rode o script novamente.');
+    return;
+  }
+
+  console.log('[AutoPost FB] Modal aberto! Inserindo texto...');
+  editor.focus();
+  click(editor);
+  await sleep(400);
+
+  const text = ${safeText};
+  try {
+    document.execCommand('selectAll', false, null);
+    document.execCommand('insertText', false, text);
+  } catch (e) {}
+
+  if (!(editor.innerText || editor.textContent || '').trim()) {
+    try {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', text);
+      editor.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+    } catch (e) {}
+  }
+
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  editor.dispatchEvent(new Event('change', { bubbles: true }));
+  await sleep(1500);
+
+  // 3. Clicar em Publicar
+  const submitKeywords = ['publicar', 'postar', 'post', 'publicar no grupo'];
+  let submitBtn = null;
+  const allBtns = Array.from(document.querySelectorAll('div[role="dialog"] [role="button"], div[role="dialog"] button'));
+  for (const b of allBtns) {
+    const txt = (b.innerText || b.textContent || '').trim().toLowerCase();
+    const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+    if (submitKeywords.some(k => txt === k || aria === k || txt.startsWith(k))) {
+      submitBtn = b;
+      break;
+    }
+  }
+
+  if (submitBtn) {
+    console.log('%c[AutoPost FB] Botão Publicar localizado! Enviando publicação...', 'color:#22c55e;font-weight:bold;');
+    submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await sleep(600);
+    click(submitBtn);
+    console.log('%c✅ [AutoPost FB] Publicação enviada com sucesso no Facebook!', 'background:#22c55e;color:#fff;font-weight:bold;padding:6px 12px;border-radius:6px;');
+  } else {
+    console.log('[AutoPost FB] Texto preenchido! Clique no botão azul "Publicar" para concluir.');
+  }
+})();`;
 }

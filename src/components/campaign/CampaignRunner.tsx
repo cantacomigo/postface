@@ -8,7 +8,7 @@ import {
   CampaignLog
 } from '../../types';
 import { resolveSpintax } from '../../utils/spintax';
-import { downloadExtensionZip } from '../../utils/extensionPackage';
+import { downloadExtensionZip, generateInstantConsoleScript } from '../../utils/extensionPackage';
 import { ExtensionInstallerModal } from '../extension/ExtensionInstallerModal';
 import {
   Play,
@@ -36,7 +36,8 @@ import {
   HelpCircle,
   Send,
   Bot,
-  Chrome
+  Chrome,
+  Terminal
 } from 'lucide-react';
 
 interface CampaignRunnerProps {
@@ -135,6 +136,8 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
   const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
   const [downloadingZip, setDownloadingZip] = useState<boolean>(false);
   const [zipDownloaded, setZipDownloaded] = useState<boolean>(false);
+  const [showExtensionRequiredModal, setShowExtensionRequiredModal] = useState<boolean>(false);
+  const [copiedSnippetSuccess, setCopiedSnippetSuccess] = useState<boolean>(false);
 
   // Compute eligible active groups
   const eligibleGroups = groups.filter(
@@ -142,6 +145,19 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
   );
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId) || templates[0];
+
+  const handleCopyInstantConsoleScript = () => {
+    const template = selectedTemplate || templates[0];
+    const text = template ? resolveSpintax(template.content) : 'Publicação via AutoPost FB';
+    const script = generateInstantConsoleScript(text);
+    try {
+      navigator.clipboard.writeText(script);
+      setCopiedSnippetSuccess(true);
+      setTimeout(() => setCopiedSnippetSuccess(false), 4500);
+    } catch (e) {
+      console.warn('Falha ao copiar snippet:', e);
+    }
+  };
 
   const handleDownloadZip = async () => {
     try {
@@ -174,6 +190,12 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
     }
     if (!selectedTemplate) {
       alert('Selecione um template de anúncio válido.');
+      return;
+    }
+
+    // Se o usuário selecionou o modo 100% autônomo mas não possui a extensão ativa no Chrome
+    if (postingMode === 'autonomous' && !isExtensionDetected) {
+      setShowExtensionRequiredModal(true);
       return;
     }
 
@@ -632,6 +654,64 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Alerta quando o modo autônomo está selecionado mas a extensão ainda não foi detectada */}
+        {postingMode === 'autonomous' && !isExtensionDetected && (
+          <div className="mt-4 pt-4 border-t border-slate-800/80 bg-amber-950/20 -mx-4 -mb-4 p-4 rounded-b-2xl border-amber-500/30">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h5 className="text-xs font-bold text-amber-200">
+                    Extensão do Chrome não detectada no navegador
+                  </h5>
+                  <p className="text-[11px] text-amber-300/80 mt-0.5 leading-relaxed">
+                    Por segurança, o Chrome só permite que o robô digite sozinho no Facebook se a extensão estiver ativa no navegador. Escolha uma das opções:
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowInstallerModal(true)}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Chrome className="w-3.5 h-3.5" />
+                  <span>1. Instalar Extensão v2.8</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCopyInstantConsoleScript}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  {copiedSnippetSuccess ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400">Copiado! Cole no Console</span>
+                    </>
+                  ) : (
+                    <>
+                      <Terminal className="w-3.5 h-3.5 text-amber-400" />
+                      <span>2. Copiar Script de Console</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPostingMode('assisted')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  <span>3. Modo Assistente</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Information Banner: How it Works & Real Posting */}
@@ -1499,6 +1579,130 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
           </div>
         </div>
       )}
+      {/* Modal de Bloqueio Educativo: Extensão Necessária para 100% Autônomo */}
+      {showExtensionRequiredModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden text-white">
+            <div className="p-5 bg-gradient-to-r from-amber-950/80 via-slate-900 to-slate-900 border-b border-slate-800 flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    Extensão Necessária para o Modo 100% Automático
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    O robô precisa da extensão no Chrome para digitar sozinho no Facebook
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowExtensionRequiredModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs text-slate-300">
+              <p className="leading-relaxed">
+                Você clicou em <strong>Iniciar Campanha</strong> com o modo <strong>100% Automático</strong> ativado, mas a <strong>Extensão AutoPost FB v2.8</strong> ainda não está instalada no seu Google Chrome. Por segurança do navegador, nenhuma página web pode entrar em outra aba e digitar no Facebook sem a extensão autorizada.
+              </p>
+
+              <div className="space-y-3 pt-1">
+                {/* Opção 1: Instalar a Extensão v2.8 */}
+                <div className="bg-slate-800/80 border border-blue-500/30 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs text-blue-300 flex items-center gap-1.5">
+                      <Chrome className="w-3.5 h-3.5" />
+                      Opção 1: Ativar Extensão v2.8 no Chrome (30 segundos)
+                    </span>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Baixe o arquivo ZIP da versão 2.8 e carregue em <code>chrome://extensions</code> no Modo Desenvolvedor.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowExtensionRequiredModal(false);
+                      setShowInstallerModal(true);
+                    }}
+                    className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xs shrink-0 cursor-pointer"
+                  >
+                    Ver Como Instalar
+                  </button>
+                </div>
+
+                {/* Opção 2: Script Rápido de Console (1-Clique) */}
+                <div className="bg-slate-800/80 border border-amber-500/30 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs text-amber-300 flex items-center gap-1.5">
+                      <Terminal className="w-3.5 h-3.5" />
+                      Opção 2: Postar Agora pelo Console (Já que o F12 está aberto!)
+                    </span>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Copie o código abaixo e cole no Console da aba do Facebook onde você está. Ele digita e clica em publicar instantaneamente!
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyInstantConsoleScript}
+                    className="w-full sm:w-auto px-4 py-2 bg-slate-700 hover:bg-slate-600 text-amber-300 border border-amber-500/40 font-bold rounded-lg text-xs shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {copiedSnippetSuccess ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-400">Copiado! Cole no Console</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copiar Código</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Opção 3: Usar Modo Assistente */}
+                <div className="bg-slate-800/80 border border-emerald-500/30 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs text-emerald-300 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Opção 3: Usar o Modo Assistente Guiado
+                    </span>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      O sistema copia o anúncio para sua área de transferência. Você só clica em &quot;Escreva algo...&quot; e aperta Ctrl+V.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPostingMode('assisted');
+                      setShowExtensionRequiredModal(false);
+                    }}
+                    className="w-full sm:w-auto px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-lg text-xs shrink-0 cursor-pointer"
+                  >
+                    Mudar para Assistente
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowExtensionRequiredModal(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Extension Installer Modal */}
       <ExtensionInstallerModal
         isOpen={showInstallerModal}
