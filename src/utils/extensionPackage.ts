@@ -52,7 +52,7 @@ function buildExtensionFilesMap(): Record<string, string> {
   const MANIFEST_V3_JSON = `{
   "manifest_version": 3,
   "name": "AutoPost FB - Extensão Anti-Ban (Robô Autônomo)",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Automação 100% autônoma de postagens em grupos do Facebook operando na sessão ativa do navegador com motor de proteção anti-bloqueio.",
   "permissions": [
     "tabs",
@@ -193,12 +193,12 @@ function buildExtensionFilesMap(): Record<string, string> {
 
   // 3. FB AUTOMATOR CONTENT SCRIPT (DOM Automation on Facebook)
   const FB_AUTOMATOR_CODE = `/**
- * Content Script: Injetado na página do Grupo do Facebook (v3.0.0)
- * Encontra a caixa de publicação, digita com variação humana e confirma envio.
+ * Content Script: Injetado na página do Grupo do Facebook (v3.2.0)
+ * Encontra a caixa de publicação, digita texto, anexa imagens e confirma envio.
  * Possui isolamento estrito de URL para evitar conflito entre abas do Facebook.
  */
 
-console.log('%c[AutoPost FB v3.0.0] Robô Ativo na Página do Facebook!', 'background:#2563eb;color:#ffffff;font-weight:bold;font-size:13px;padding:6px 12px;border-radius:6px;');
+console.log('%c[AutoPost FB v3.2.0] Robô Ativo na Página do Facebook!', 'background:#2563eb;color:#ffffff;font-weight:bold;font-size:13px;padding:6px 12px;border-radius:6px;');
 
 let isWorkflowRunning = false;
 
@@ -467,6 +467,22 @@ async function runPostWorkflow({ template, group, resolvedText }) {
     // 6. Insere o texto simulando digitação e eventos nativos
     await insertTextIntoEditor(editorArea, textToPost);
     await sleep(2000);
+
+    // 6.5. Insere imagem(ns) se houver imagem no template/configuração
+    const templateImages = (template && Array.isArray(template.images) && template.images.length > 0)
+      ? template.images
+      : [];
+
+    if (templateImages.length > 0) {
+      showStatusBanner('Anexando imagem(ns) ao post...', 'info');
+      try {
+        await uploadImagesIntoModal(templateImages);
+        await sleep(3500); // Aguarda upload e renderização da foto no modal pelo Facebook
+      } catch (imgErr) {
+        console.warn('[AutoPost FB] Erro ou aviso ao tentar anexar imagens:', imgErr);
+        showStatusBanner('Aviso na imagem: ' + imgErr.message + ', continuando post...', 'info');
+      }
+    }
 
     // 7. Localiza e aciona o botão Publicar
     const submitted = await findAndClickSubmitButton();
@@ -842,6 +858,149 @@ async function insertTextIntoEditor(element, text) {
   element.dispatchEvent(new Event('change', { bubbles: true }));
 
   await sleep(800);
+}
+
+// Utilitário para converter base64 ou URL em objeto File
+async function urlOrBase64ToFile(item, index) {
+  let blob;
+  let filename = 'imagem_' + (index + 1) + '.jpg';
+  let mimeType = 'image/jpeg';
+
+  if (item.startsWith('data:')) {
+    const parts = item.split(',');
+    const match = parts[0].match(/:(.*?);/);
+    if (match) mimeType = match[1];
+    const bstr = atob(parts[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    blob = new Blob([u8arr], { type: mimeType });
+    const ext = mimeType.split('/')[1] || 'jpg';
+    filename = 'imagem_' + (index + 1) + '.' + ext;
+  } else {
+    // Se for URL externa, baixa via fetch
+    try {
+      const resp = await fetch(item);
+      blob = await resp.blob();
+      mimeType = blob.type || 'image/jpeg';
+      const ext = mimeType.split('/')[1] || 'jpg';
+      filename = 'imagem_' + (index + 1) + '.' + ext;
+    } catch (e) {
+      console.warn('[AutoPost FB] Falha ao baixar imagem via fetch:', e);
+      return null;
+    }
+  }
+
+  return new File([blob], filename, { type: mimeType, lastModified: Date.now() });
+}
+
+async function uploadImagesIntoModal(imageUrls) {
+  if (!imageUrls || imageUrls.length === 0) return;
+
+  const allDialogs = Array.from(document.querySelectorAll('div[role="dialog"], [aria-modal="true"]'));
+  const activeDialog = allDialogs.find(d => {
+    const txt = (d.innerText || d.textContent || '').toLowerCase();
+    const isNotComment = !txt.includes('comentários no post') && !txt.includes('responder comentário');
+    return (txt.includes('criar post') || txt.includes('postar') || txt.includes('publicar') || txt.includes('foto')) &&
+           isNotComment && d.offsetWidth > 0 && d.offsetHeight > 0;
+  }) || allDialogs.find(d => d.offsetWidth > 0 && d.offsetHeight > 200) || document;
+
+  // Converte as imagens para Files
+  const files = [];
+  for (let i = 0; i < imageUrls.length; i++) {
+    const file = await urlOrBase64ToFile(imageUrls[i], i);
+    if (file) files.push(file);
+  }
+
+  if (files.length === 0) {
+    console.warn('[AutoPost FB] Nenhuma imagem válida para carregar.');
+    return;
+  }
+
+  // 1. Procura input de arquivo existente no modal ou na página
+  let fileInput = activeDialog.querySelector('input[type="file"][accept*="image"]') ||
+                  document.querySelector('div[role="dialog"] input[type="file"]') ||
+                  document.querySelector('input[type="file"][accept*="image"]');
+
+  // Se o input de arquivo não estiver ativo/visível, clica no botão "Foto/Vídeo" no modal
+  if (!fileInput) {
+    const photoBtnKeywords = [
+      'foto/vídeo',
+      'foto/video',
+      'foto',
+      'photo/video',
+      'photo',
+      'adicionar fotos'
+    ];
+
+    const allButtons = Array.from(activeDialog.querySelectorAll('[role="button"], [aria-label], button, span, div'));
+    const photoButton = allButtons.find(b => {
+      const aria = (b.getAttribute('aria-label') || '').toLowerCase().trim();
+      const txt = (b.innerText || b.textContent || '').toLowerCase().trim();
+      return photoBtnKeywords.some(k => aria.includes(k) || txt === k || txt.startsWith(k));
+    });
+
+    if (photoButton) {
+      console.log('[AutoPost FB] Acionando botão Foto/Vídeo no modal...');
+      simulateUserClick(photoButton);
+      await sleep(1200);
+
+      // Tenta achar o input de arquivo novamente após abrir a seção de foto
+      fileInput = activeDialog.querySelector('input[type="file"]') ||
+                  document.querySelector('div[role="dialog"] input[type="file"]') ||
+                  document.querySelector('input[type="file"]');
+    }
+  }
+
+  // Método A: Injeção direta de arquivos no input file (DataTransfer)
+  if (fileInput) {
+    console.log('[AutoPost FB] Input de upload de arquivo encontrado, inserindo imagens...');
+    try {
+      const dataTransfer = new DataTransfer();
+      files.forEach(f => dataTransfer.items.add(f));
+
+      fileInput.files = dataTransfer.files;
+      fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+      console.log('[AutoPost FB] Eventos de upload disparados com sucesso no input file!');
+      await sleep(2000);
+      return;
+    } catch (e) {
+      console.warn('[AutoPost FB] Falha ao injetar no input de arquivo:', e);
+    }
+  }
+
+  // Método B: Drop/Paste de imagens direto na área do modal
+  console.log('[AutoPost FB] Tentando colar/arrastar imagem diretamente no modal...');
+  try {
+    const dataTransfer = new DataTransfer();
+    files.forEach(f => dataTransfer.items.add(f));
+
+    // Drop event
+    const dropEvent = new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: dataTransfer
+    });
+    activeDialog.dispatchEvent(dropEvent);
+
+    // Paste event
+    const pasteEvent = new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer
+    });
+    const editor = activeDialog.querySelector('[contenteditable="true"]') || activeDialog;
+    editor.dispatchEvent(pasteEvent);
+
+    console.log('[AutoPost FB] Drop/Paste de imagem realizado!');
+    await sleep(2000);
+  } catch (err) {
+    console.warn('[AutoPost FB] Falha ao injetar imagens por drop/paste:', err);
+  }
 }
 
 async function findAndClickSubmitButton() {
