@@ -680,7 +680,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                   className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
                   <Chrome className="w-3.5 h-3.5" />
-                  <span>1. Instalar Extensão v2.9</span>
+                  <span>1. Instalar Extensão v3.2</span>
                 </button>
 
                 <button

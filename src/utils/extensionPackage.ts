@@ -114,7 +114,7 @@ function buildExtensionFilesMap(): Record<string, string> {
 
   // 2. BRIDGE CONTENT SCRIPT
   const BRIDGE_JS_CODE = `/**
- * Bridge Content Script: Conecta o Painel Web diretamente à Extensão do Chrome (v3.0.0)
+ * Bridge Content Script: Conecta o Painel Web diretamente à Extensão do Chrome (v3.2.0)
  * Suporta execução em abas normais e dentro de iframes (ex: Google AI Studio).
  */
 (function() {
@@ -122,7 +122,7 @@ function buildExtensionFilesMap(): Record<string, string> {
     const payload = {
       source: 'AUTOPPOST_CHROME_EXTENSION',
       type: 'AUTOPPOST_EXTENSION_CONNECTED',
-      version: '3.0.0',
+      version: '3.2.0',
       status: 'active',
       timestamp: Date.now()
     };
@@ -1741,7 +1741,7 @@ export async function downloadExtensionZip(): Promise<void> {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'autopost-fb-extensao-v3.0.zip';
+  a.download = 'autopost-fb-extensao-v3.2.zip';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

@@ -69,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="text-lg font-bold tracking-tight text-white">AutoPost FB</span>
                   <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    Anti-Ban v2.4 (Manifest V3)
+                    Anti-Ban v3.2 (Manifest V3)
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
