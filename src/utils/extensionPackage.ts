@@ -52,7 +52,7 @@ function buildExtensionFilesMap(): Record<string, string> {
   const MANIFEST_V3_JSON = `{
   "manifest_version": 3,
   "name": "AutoPost FB - Extensão Anti-Ban (Robô Autônomo)",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Automação 100% autônoma de postagens em grupos do Facebook operando na sessão ativa do navegador com motor de proteção anti-bloqueio.",
   "permissions": [
     "tabs",
@@ -474,9 +474,21 @@ async function runPostWorkflow({ template, group, resolvedText }) {
       throw new Error('Botão "Publicar" não localizado ou continuou desabilitado pelo Facebook.');
     }
 
+    // Aguarda o Facebook processar o envio e fechar o modal
+    showStatusBanner('Aguardando Facebook processar o post...', 'info');
+    let modalClosed = false;
+    for (let w = 0; w < 10; w++) {
+      await sleep(1000);
+      const remainingDialog = document.querySelector('div[role="dialog"]');
+      if (!remainingDialog || remainingDialog.offsetWidth === 0) {
+        modalClosed = true;
+        break;
+      }
+    }
+
     // 8. Confirmação de publicação e limpeza
     showStatusBanner('Publicação enviada com sucesso!', 'success');
-    await sleep(4000);
+    await sleep(2000);
 
     // Limpa a tarefa do storage
     chrome.storage.local.remove(['activeTask']);
@@ -532,13 +544,29 @@ async function findAndClickComposerTrigger() {
     // Helper para certificar que o elemento NÃO pertence a nenhum post/feed/comentário existente
     function isFeedOrCommentElement(el) {
       if (!el) return false;
-      // Proíbe elementos dentro de posts do feed
-      if (el.closest('[role="feed"]') || el.closest('[role="article"]') || el.closest('[data-pagelet*="FeedUnit"]') || el.closest('[data-pagelet*="GroupFeed"]')) {
+      // Proíbe elementos dentro de posts do feed ou caixas de comentário
+      if (
+        el.closest('[role="feed"]') ||
+        el.closest('[role="article"]') ||
+        el.closest('[data-pagelet*="FeedUnit"]') ||
+        el.closest('[data-pagelet*="GroupFeed"]') ||
+        el.closest('[data-pagelet*="UFI2"]') ||
+        el.closest('[aria-label*="coment" i]') ||
+        el.closest('[aria-label*="comment" i]')
+      ) {
         return true;
       }
       const label = ((el.getAttribute && el.getAttribute('aria-label')) || '').toLowerCase();
       const txt = (el.innerText || el.textContent || '').toLowerCase();
-      if (label.includes('coment') || txt.includes('escreva um comentário') || txt.includes('write a comment')) {
+      if (
+        label.includes('coment') ||
+        label.includes('comment') ||
+        txt.includes('comente como') ||
+        txt.includes('escreva um comentário') ||
+        txt.includes('write a comment') ||
+        txt.includes('responder') ||
+        txt.includes('reply')
+      ) {
         return true;
       }
       return false;
@@ -601,7 +629,7 @@ async function findAndClickComposerTrigger() {
     while ((textNode = walker.nextNode())) {
       const val = (textNode.nodeValue || '').trim().toLowerCase();
       // Não pode ser comentário nem resposta
-      if (val.includes('comentário') || val.includes('comment') || val.includes('responder')) continue;
+      if (val.includes('comentário') || val.includes('comment') || val.includes('responder') || val.includes('comente')) continue;
 
       if (val && validTriggerKeywords.some(k => val === k || val.startsWith(k))) {
         const parent = textNode.parentElement;
@@ -764,9 +792,9 @@ async function insertTextIntoEditor(element, text) {
     document.execCommand('delete', false, null);
   } catch (e) {}
 
-  await sleep(150);
+  await sleep(200);
 
-  // 2. Método Primário: execCommand insertText (padrão ouro para o Lexical do Facebook)
+  // 2. Método Primário: execCommand insertText (padrão nativo para o Lexical do Facebook)
   let insertionDone = false;
   try {
     insertionDone = document.execCommand('insertText', false, text);
@@ -775,9 +803,10 @@ async function insertTextIntoEditor(element, text) {
   }
 
   // Verifica se o texto realmente entrou
-  const writtenText = (element.innerText || element.textContent || '').trim();
-  if (!insertionDone || writtenText.length < 2) {
-    // 3. Método Secundário: Paste limpo via ClipboardData
+  let currentContent = (element.innerText || element.textContent || '').trim();
+
+  // 3. SE e SOMENTE SE o texto ainda estiver vazio, usa método de fallback Paste
+  if (!insertionDone || currentContent.length === 0) {
     try {
       const dt = new DataTransfer();
       dt.setData('text/plain', text);
@@ -792,9 +821,11 @@ async function insertTextIntoEditor(element, text) {
     }
   }
 
-  // Se ainda estiver vazio, fallback de beforeinput
-  const checkTextAfterPaste = (element.innerText || element.textContent || '').trim();
-  if (checkTextAfterPaste.length < 2) {
+  // Verifica se o fallback funcionou
+  currentContent = (element.innerText || element.textContent || '').trim();
+
+  // 4. Último recurso apenas se continuar totalmente vazio
+  if (currentContent.length === 0) {
     try {
       const inputEvent = new InputEvent('beforeinput', {
         bubbles: true,
@@ -806,12 +837,11 @@ async function insertTextIntoEditor(element, text) {
     } catch (e) {}
   }
 
-  // 4. Dispara eventos de atualização para o React sincronizar o estado
+  // 5. Dispara eventos mínimos para o Lexical/React registrar a alteração sem duplicar
   element.dispatchEvent(new Event('input', { bubbles: true }));
   element.dispatchEvent(new Event('change', { bubbles: true }));
-  element.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true }));
 
-  await sleep(1200);
+  await sleep(800);
 }
 
 async function findAndClickSubmitButton() {
