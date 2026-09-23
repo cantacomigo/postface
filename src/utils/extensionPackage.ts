@@ -599,7 +599,10 @@ async function findAndClickComposerTrigger() {
       '[aria-label*="No que você está pensando" i]',
       '[aria-label*="Criar publicação" i]',
       '[aria-label*="Create a public post" i]',
-      '[aria-label*="Write something" i]'
+      '[aria-label*="Write something" i]',
+      '[aria-label*="Foto/vídeo" i]',
+      '[aria-label*="Foto/video" i]',
+      '[aria-label*="Photo/video" i]'
     ];
 
     for (const sel of directSelectors) {
@@ -818,7 +821,7 @@ async function insertTextIntoEditor(element, text) {
     insertionDone = false;
   }
 
-  // Verifica se o texto realmente entrou
+  // Verifica o comprimento inserido
   let currentContent = (element.innerText || element.textContent || '').trim();
 
   // 3. SE e SOMENTE SE o texto ainda estiver vazio, usa método de fallback Paste
@@ -863,22 +866,27 @@ async function insertTextIntoEditor(element, text) {
 // Utilitário para converter base64 ou URL em objeto File
 async function urlOrBase64ToFile(item, index) {
   let blob;
-  let filename = 'imagem_' + (index + 1) + '.jpg';
+  let filename = 'foto_' + (index + 1) + '.jpg';
   let mimeType = 'image/jpeg';
 
-  if (item.startsWith('data:')) {
-    const parts = item.split(',');
-    const match = parts[0].match(/:(.*?);/);
-    if (match) mimeType = match[1];
-    const bstr = atob(parts[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
+  if (typeof item === 'string' && item.startsWith('data:')) {
+    try {
+      const parts = item.split(',');
+      const match = parts[0].match(/:(.*?);/);
+      if (match) mimeType = match[1];
+      const bstr = atob(parts[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      blob = new Blob([u8arr], { type: mimeType });
+      const ext = mimeType.split('/')[1] || 'jpg';
+      filename = 'imagem_' + (index + 1) + '.' + ext;
+    } catch (err) {
+      console.warn('[AutoPost FB] Erro ao decodificar Base64 da imagem:', err);
+      return null;
     }
-    blob = new Blob([u8arr], { type: mimeType });
-    const ext = mimeType.split('/')[1] || 'jpg';
-    filename = 'imagem_' + (index + 1) + '.' + ext;
   } else {
     // Se for URL externa, baixa via fetch
     try {
@@ -919,10 +927,14 @@ async function uploadImagesIntoModal(imageUrls) {
     return;
   }
 
+  console.log('[AutoPost FB] ' + files.length + ' imagem(ns) preparadas para anexo.');
+
   // 1. Procura input de arquivo existente no modal ou na página
   let fileInput = activeDialog.querySelector('input[type="file"][accept*="image"]') ||
+                  activeDialog.querySelector('input[type="file"]') ||
                   document.querySelector('div[role="dialog"] input[type="file"]') ||
-                  document.querySelector('input[type="file"][accept*="image"]');
+                  document.querySelector('input[type="file"][accept*="image"]') ||
+                  document.querySelector('input[type="file"]');
 
   // Se o input de arquivo não estiver ativo/visível, clica no botão "Foto/Vídeo" no modal
   if (!fileInput) {
@@ -930,9 +942,14 @@ async function uploadImagesIntoModal(imageUrls) {
       'foto/vídeo',
       'foto/video',
       'foto',
+      'fotos',
       'photo/video',
       'photo',
-      'adicionar fotos'
+      'photos',
+      'adicionar foto',
+      'adicionar fotos',
+      'carregar foto',
+      'carregar fotos'
     ];
 
     const allButtons = Array.from(activeDialog.querySelectorAll('[role="button"], [aria-label], button, span, div'));
@@ -945,7 +962,7 @@ async function uploadImagesIntoModal(imageUrls) {
     if (photoButton) {
       console.log('[AutoPost FB] Acionando botão Foto/Vídeo no modal...');
       simulateUserClick(photoButton);
-      await sleep(1200);
+      await sleep(1500);
 
       // Tenta achar o input de arquivo novamente após abrir a seção de foto
       fileInput = activeDialog.querySelector('input[type="file"]') ||
@@ -956,7 +973,7 @@ async function uploadImagesIntoModal(imageUrls) {
 
   // Método A: Injeção direta de arquivos no input file (DataTransfer)
   if (fileInput) {
-    console.log('[AutoPost FB] Input de upload de arquivo encontrado, inserindo imagens...');
+    console.log('[AutoPost FB] Input de upload de arquivo encontrado, inserindo ' + files.length + ' imagens...');
     try {
       const dataTransfer = new DataTransfer();
       files.forEach(f => dataTransfer.items.add(f));
@@ -966,25 +983,29 @@ async function uploadImagesIntoModal(imageUrls) {
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
 
       console.log('[AutoPost FB] Eventos de upload disparados com sucesso no input file!');
-      await sleep(2000);
+      await sleep(2500);
       return;
     } catch (e) {
       console.warn('[AutoPost FB] Falha ao injetar no input de arquivo:', e);
     }
   }
 
-  // Método B: Drop/Paste de imagens direto na área do modal
+  // Método B: Drop/Paste de imagens direto na área do modal e editor
   console.log('[AutoPost FB] Tentando colar/arrastar imagem diretamente no modal...');
   try {
     const dataTransfer = new DataTransfer();
     files.forEach(f => dataTransfer.items.add(f));
 
-    // Drop event
+    // Drop events
+    const dragEnterEvent = new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer });
+    const dragOverEvent = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer });
     const dropEvent = new DragEvent('drop', {
       bubbles: true,
       cancelable: true,
       dataTransfer: dataTransfer
     });
+    activeDialog.dispatchEvent(dragEnterEvent);
+    activeDialog.dispatchEvent(dragOverEvent);
     activeDialog.dispatchEvent(dropEvent);
 
     // Paste event
@@ -995,9 +1016,10 @@ async function uploadImagesIntoModal(imageUrls) {
     });
     const editor = activeDialog.querySelector('[contenteditable="true"]') || activeDialog;
     editor.dispatchEvent(pasteEvent);
+    activeDialog.dispatchEvent(pasteEvent);
 
-    console.log('[AutoPost FB] Drop/Paste de imagem realizado!');
-    await sleep(2000);
+    console.log('[AutoPost FB] Drop/Paste de imagem realizado com sucesso!');
+    await sleep(2500);
   } catch (err) {
     console.warn('[AutoPost FB] Falha ao injetar imagens por drop/paste:', err);
   }
