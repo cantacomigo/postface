@@ -83,6 +83,20 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
         }
       }
 
+      if (event.data.type === 'AUTOPOST_COUNTDOWN') {
+        if (typeof event.data.payload?.seconds === 'number') {
+          setCountdown(event.data.payload.seconds);
+        }
+      }
+
+      if (event.data.type === 'AUTOPOST_CAMPAIGN_FINISHED') {
+        setIsRunning(false);
+        setIsPaused(false);
+        setCountdown(0);
+        setCurrentStep('🎉 Campanha finalizada com sucesso! Todos os grupos foram concluídos.');
+        setCurrentIndex(selectedGroups.length);
+      }
+
       if (event.data.type === 'AUTOPOST_POST_SUCCESS') {
         const payload = event.data.payload;
         onUpdateGroupStatus(payload.groupId, 'success');

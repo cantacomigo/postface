@@ -7,7 +7,7 @@ export interface ExtensionFile {
   content: string;
 }
 
-export const EXTENSION_VERSION = '3.3.3';
+export const EXTENSION_VERSION = '3.3.4';
 
 export function getExtensionFiles(): ExtensionFile[] {
   const manifest = `{
@@ -105,6 +105,12 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.action === 'CAMPAIGN_POST_ERROR') {
     window.postMessage({ type: 'AUTOPOST_POST_ERROR', payload: message.payload }, '*');
   }
+  if (message.action === 'CAMPAIGN_COUNTDOWN') {
+    window.postMessage({ type: 'AUTOPOST_COUNTDOWN', payload: message.payload }, '*');
+  }
+  if (message.action === 'CAMPAIGN_FINISHED') {
+    window.postMessage({ type: 'AUTOPOST_CAMPAIGN_FINISHED', payload: message.payload }, '*');
+  }
 });
 `;
 
@@ -153,8 +159,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function notifyDashboard(action, payload) {
-  if (senderTabId) {
-    chrome.tabs.sendMessage(senderTabId, { action, payload }).catch(() => {});
+  try {
+    chrome.tabs.query({}, (tabs) => {
+      if (tabs && tabs.length) {
+        tabs.forEach((tab) => {
+          chrome.tabs.sendMessage(tab.id, { action, payload }).catch(() => {});
+        });
+      }
+    });
+  } catch (err) {
+    console.warn('[AutoPost FB] Erro ao notificar dashboard:', err);
   }
 }
 
@@ -201,19 +215,30 @@ async function runCampaignWorkflow(campaign) {
     const group = groups[i];
     notifyDashboard('CAMPAIGN_STEP_UPDATE', {
       groupIndex: i,
+      totalGroups: groups.length,
       groupName: group.name,
-      step: \`[1/4] Abrindo aba real do grupo: \${group.name}...\`
+      step: \`[1/4] Abrindo grupo (\${i + 1}/\${groups.length}): \${group.name}...\`
     });
 
+    let fbTab = null;
+
     try {
-      // 1. Cria ou atualiza a aba com o grupo do Facebook
-      const fbTab = await chrome.tabs.create({ url: group.url, active: true });
+      // 1. Abre a aba com o grupo do Facebook
+      fbTab = await chrome.tabs.create({ url: group.url, active: true });
       await wait(8000); // Aguarda carregamento real do Facebook
+
+      if (!isBusy) {
+        if (fbTab && fbTab.id) {
+          try { await chrome.tabs.remove(fbTab.id); } catch(e){}
+        }
+        break;
+      }
 
       notifyDashboard('CAMPAIGN_STEP_UPDATE', {
         groupIndex: i,
+        totalGroups: groups.length,
         groupName: group.name,
-        step: \`[2/4] Injetando texto e anexando imagem automaticamente...\`
+        step: \`[2/4] Publicando no grupo (\${i + 1}/\${groups.length}): Injetando texto e imagem...\`
       });
 
       // 2. Dispara injeção real no Facebook com listener dedicado de resposta
@@ -226,27 +251,36 @@ async function runCampaignWorkflow(campaign) {
         };
         chrome.runtime.onMessage.addListener(resultListener);
 
-        // Timeout de segurança de 40s
+        // Timeout de segurança de 50s
         setTimeout(() => {
           chrome.runtime.onMessage.removeListener(resultListener);
           resolve({ success: false, error: 'Tempo limite esgotado aguardando confirmação do Facebook.' });
-        }, 40000);
+        }, 50000);
       });
 
-      // Envia comando para a aba do Facebook com a imagem já em Base64 pronta
-      await chrome.tabs.sendMessage(fbTab.id, {
-        action: 'EXECUTE_POST',
-        payload: {
-          groupId: group.id,
-          groupName: group.name,
-          text: template.text,
-          mediaDataUrl: mediaDataUrl,
-          mediaUrls: template.mediaUrls || [],
-          postToken: 'POST_' + Date.now() + '_' + Math.random().toString(36).substring(7)
+      // Envia comando para a aba do Facebook com até 5 tentativas para garantir inicialização
+      let delivered = false;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const resp = await chrome.tabs.sendMessage(fbTab.id, {
+            action: 'EXECUTE_POST',
+            payload: {
+              groupId: group.id,
+              groupName: group.name,
+              text: template.text,
+              mediaDataUrl: mediaDataUrl,
+              mediaUrls: template.mediaUrls || [],
+              postToken: 'POST_' + Date.now() + '_' + Math.random().toString(36).substring(7)
+            }
+          });
+          if (resp && resp.received) {
+            delivered = true;
+            break;
+          }
+        } catch (err) {
+          await wait(1500);
         }
-      }).catch((err) => {
-        console.warn('[AutoPost FB] Aviso no envio inicial:', err);
-      });
+      }
 
       const postResult = await postPromise;
 
@@ -260,22 +294,36 @@ async function runCampaignWorkflow(campaign) {
         notifyDashboard('CAMPAIGN_POST_ERROR', {
           groupId: group.id,
           groupName: group.name,
-          error: postResult?.error || 'Falha ao clicar no botão Publicar'
+          error: postResult?.error || 'Falha ao concluir publicação'
         });
       }
 
-      // Intervalo humanizado aleatório (Anti-Ban)
-      const randomDelay = Math.floor(
-        Math.random() * (antiBan.maxDelay - antiBan.minDelay + 1) + antiBan.minDelay
-      );
-      
-      notifyDashboard('CAMPAIGN_STEP_UPDATE', {
-        groupIndex: i,
-        groupName: group.name,
-        step: \`[4/4] Aguardando intervalo anti-ban de \${randomDelay}s...\`
-      });
+      // Aguarda 4 segundos de margem para o Facebook salvar e fecha a aba do post
+      await wait(4000);
+      if (fbTab && fbTab.id) {
+        try {
+          await chrome.tabs.remove(fbTab.id);
+        } catch (e) {}
+      }
 
-      await wait(randomDelay * 1000);
+      // Se houver próximo grupo, realiza intervalo anti-ban avisando a cada segundo
+      if (i < groups.length - 1 && isBusy) {
+        const minD = Math.max(10, Number(antiBan?.minDelay) || 25);
+        const maxD = Math.max(minD + 5, Number(antiBan?.maxDelay) || 45);
+        const randomDelay = Math.floor(Math.random() * (maxD - minD + 1) + minD);
+
+        for (let s = randomDelay; s > 0; s--) {
+          if (!isBusy) break;
+          notifyDashboard('CAMPAIGN_COUNTDOWN', { seconds: s });
+          notifyDashboard('CAMPAIGN_STEP_UPDATE', {
+            groupIndex: i,
+            totalGroups: groups.length,
+            groupName: group.name,
+            step: \`[4/4] Post concluído! Próximo grupo em \${s}s (Intervalo Anti-Ban)...\`
+          });
+          await wait(1000);
+        }
+      }
 
     } catch (err) {
       console.error('[AutoPost FB] Erro:', err);
@@ -284,12 +332,19 @@ async function runCampaignWorkflow(campaign) {
         groupName: group.name,
         error: err.message
       });
-      await wait(8000);
+      if (fbTab && fbTab.id) {
+        try { await chrome.tabs.remove(fbTab.id); } catch(e){}
+      }
+      await wait(4000);
     }
   }
 
   isBusy = false;
   console.log('[AutoPost FB] Campanha finalizada.');
+  notifyDashboard('CAMPAIGN_FINISHED', {
+    total: groups.length,
+    timestamp: new Date().toISOString()
+  });
 }
 
 function wait(ms) {
@@ -315,7 +370,8 @@ if (window.top === window.self) {
               payload: {
                 groupId: request.payload.groupId,
                 groupName: request.payload.groupName,
-                success: true,
+                success: res ? res.success !== false : true,
+                error: res?.error,
                 timestamp: res?.timestamp || new Date().toISOString()
               }
             });
