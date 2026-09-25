@@ -54,7 +54,7 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
   const selectedGroups = groups.filter(g => selectedGroupIds.includes(g.id));
   const activeTemplate = templates.find(t => t.id === selectedTemplateId) || templates[0];
 
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Clear timers on unmount
   useEffect(() => {
