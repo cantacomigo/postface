@@ -22,7 +22,8 @@ export function getExtensionFiles(): ExtensionFile[] {
     "scripting"
   ],
   "host_permissions": [
-    "*://*.facebook.com/*"
+    "*://*.facebook.com/*",
+    "*://*/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -40,22 +41,84 @@ export function getExtensionFiles(): ExtensionFile[] {
       "js": ["content.js"],
       "run_at": "document_idle",
       "all_frames": false
+    },
+    {
+      "matches": [
+        "https://*/*",
+        "http://localhost/*",
+        "http://localhost:*/*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false
     }
   ]
 }`;
 
-  const background = `// Background Service Worker - AutoPost FB Anti-Ban v${EXTENSION_VERSION}
-// CORREÇÃO CRÍTICA: Idempotência de envio para impedir postagem duplicada ou triplicada.
+  const bridge = `// bridge.js - Conexão bidirecional entre o Painel Web e a Extensão Chrome
+window.__AUTOPOST_FB_EXTENSION_INSTALLED__ = true;
+window.__AUTOPOST_FB_VERSION__ = "${EXTENSION_VERSION}";
 
+// Notifica imediatamente o painel web que a extensão está instalada e ativa
+window.postMessage({ type: 'AUTOPOST_EXTENSION_READY', version: "${EXTENSION_VERSION}" }, '*');
+
+// Escuta comandos vindos do Painel Web (React App)
+window.addEventListener('message', (event) => {
+  if (event.source !== window || !event.data || !event.data.type) return;
+
+  if (event.data.type === 'AUTOPOST_PING') {
+    window.postMessage({ type: 'AUTOPOST_PONG', version: "${EXTENSION_VERSION}" }, '*');
+  }
+
+  if (event.data.type === 'AUTOPOST_START_CAMPAIGN') {
+    chrome.runtime.sendMessage({
+      action: 'START_CAMPAIGN',
+      payload: event.data.payload
+    }, (response) => {
+      window.postMessage({ type: 'AUTOPOST_CAMPAIGN_RESPONSE', response }, '*');
+    });
+  }
+
+  if (event.data.type === 'AUTOPOST_STOP_CAMPAIGN') {
+    chrome.runtime.sendMessage({ action: 'STOP_CAMPAIGN' });
+  }
+
+  if (event.data.type === 'AUTOPOST_EXTRACT_GROUPS') {
+    chrome.runtime.sendMessage({ action: 'EXTRACT_GROUPS' }, (response) => {
+      window.postMessage({ type: 'AUTOPOST_EXTRACT_GROUPS_RESPONSE', response }, '*');
+    });
+  }
+});
+
+// Escuta atualizações vindas do background e repassa para o painel web
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.action === 'CAMPAIGN_STEP_UPDATE') {
+    window.postMessage({ type: 'AUTOPOST_STEP_UPDATE', payload: message.payload }, '*');
+  }
+  if (message.action === 'CAMPAIGN_POST_SUCCESS') {
+    window.postMessage({ type: 'AUTOPOST_POST_SUCCESS', payload: message.payload }, '*');
+  }
+  if (message.action === 'CAMPAIGN_POST_ERROR') {
+    window.postMessage({ type: 'AUTOPOST_POST_ERROR', payload: message.payload }, '*');
+  }
+});
+`;
+
+  const background = `// Background Service Worker - AutoPost FB Anti-Ban v${EXTENSION_VERSION}
 let activeCampaign = null;
 let isBusy = false;
+let senderTabId = null;
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[AutoPost FB] Extensão instalada com sucesso.');
 });
 
-// Listener unificado com controle estrito de concorrência
+// Listener unificado de comandos
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (sender && sender.tab) {
+    senderTabId = sender.tab.id;
+  }
+
   if (message.action === 'START_CAMPAIGN') {
     if (isBusy) {
       sendResponse({ success: false, reason: 'Campanha já em andamento.' });
@@ -64,7 +127,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     isBusy = true;
     activeCampaign = message.payload;
     runCampaignWorkflow(activeCampaign);
-    sendResponse({ success: true, message: 'Campanha iniciada com sucesso.' });
+    sendResponse({ success: true, message: 'Campanha iniciada com sucesso no Facebook.' });
     return true;
   }
 
@@ -85,26 +148,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+function notifyDashboard(action, payload) {
+  if (senderTabId) {
+    chrome.tabs.sendMessage(senderTabId, { action, payload }).catch(() => {});
+  }
+}
+
 async function runCampaignWorkflow(campaign) {
   const { groups, template, antiBan } = campaign;
-  console.log(\`[AutoPost FB] Iniciando postagem para \${groups.length} grupos.\`);
+  console.log(\`[AutoPost FB] Iniciando postagem REAL para \${groups.length} grupos.\`);
 
   for (let i = 0; i < groups.length; i++) {
     if (!isBusy) break;
 
     const group = groups[i];
-    console.log(\`[AutoPost FB] Processando grupo [\${i + 1}/\${groups.length}]: \${group.name}\`);
+    notifyDashboard('CAMPAIGN_STEP_UPDATE', {
+      groupIndex: i,
+      groupName: group.name,
+      step: \`[1/4] Abrindo aba real do grupo: \${group.name}...\`
+    });
 
     try {
-      // Abre ou navega para o grupo
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab) continue;
+      // 1. Cria ou atualiza a aba com o grupo do Facebook
+      const fbTab = await chrome.tabs.create({ url: group.url, active: true });
+      await wait(8000); // Aguarda carregamento real do Facebook
 
-      await chrome.tabs.update(tab.id, { url: group.url });
-      await wait(7000); // Aguarda carregamento inicial do Facebook
+      notifyDashboard('CAMPAIGN_STEP_UPDATE', {
+        groupIndex: i,
+        groupName: group.name,
+        step: \`[2/4] Injetando publicação e digitando texto...\`
+      });
 
-      // Dispara injeção única com token de segurança anti-duplicação
-      const response = await chrome.tabs.sendMessage(tab.id, {
+      // 2. Dispara injeção real no Facebook
+      const postResult = await chrome.tabs.sendMessage(fbTab.id, {
         action: 'EXECUTE_POST',
         payload: {
           groupName: group.name,
@@ -113,18 +189,41 @@ async function runCampaignWorkflow(campaign) {
         }
       });
 
-      console.log('[AutoPost FB] Resposta do content script:', response);
+      if (postResult && postResult.success) {
+        notifyDashboard('CAMPAIGN_POST_SUCCESS', {
+          groupId: group.id,
+          groupName: group.name,
+          postUrl: group.url
+        });
+      } else {
+        notifyDashboard('CAMPAIGN_POST_ERROR', {
+          groupId: group.id,
+          groupName: group.name,
+          error: postResult?.error || 'Falha ao clicar no botão Publicar'
+        });
+      }
 
       // Intervalo humanizado aleatório (Anti-Ban)
       const randomDelay = Math.floor(
         Math.random() * (antiBan.maxDelay - antiBan.minDelay + 1) + antiBan.minDelay
       );
-      console.log(\`[AutoPost FB] Aguardando intervalo de segurança: \${randomDelay}s...\`);
+      
+      notifyDashboard('CAMPAIGN_STEP_UPDATE', {
+        groupIndex: i,
+        groupName: group.name,
+        step: \`[4/4] Aguardando intervalo anti-ban de \${randomDelay}s...\`
+      });
+
       await wait(randomDelay * 1000);
 
     } catch (err) {
-      console.error('[AutoPost FB] Erro ao postar no grupo:', group.name, err);
-      await wait(10000);
+      console.error('[AutoPost FB] Erro:', err);
+      notifyDashboard('CAMPAIGN_POST_ERROR', {
+        groupId: group.id,
+        groupName: group.name,
+        error: err.message
+      });
+      await wait(8000);
     }
   }
 
@@ -138,33 +237,7 @@ function wait(ms) {
 `;
 
   const content = `// Content Script - AutoPost FB Anti-Ban v${EXTENSION_VERSION}
-/**
- * ============================================================================
- * DIAGNÓSTICO E CORREÇÃO DO ERRO DE POSTAGEM REPETIDA 3 VEZES:
- * 
- * 1. O Facebook usa o framework 'Lexical' (React) para a caixa de publicação.
- * 2. Em versões anteriores, o script executava 3 métodos em cadeia:
- *      (a) element.innerText = texto
- *      (b) document.execCommand('insertText', false, texto)
- *      (c) element.dispatchEvent(new InputEvent('input', { data: texto }))
- *    Como o editor Lexical escutava todos os três eventos de forma independente,
- *    ele inseria o mesmo texto 3 vezes consecutivas no corpo da mensagem!
- * 3. Também ocorria registro múltiplo de ouvintes onMessage se o content script
- *    fosse injetado em sub-iframes da página.
- * 
- * SOLUÇÃO APLICADA:
- * - Trava de execução no escopo global da janela (window.__fbAutoPostLock).
- * - Restrição estrita para execução apenas no frame principal (window.top === window.self).
- * - Uso exclusivo de UMA ÚNICA chamada atômica via DataTransfer ClipboardEvent / execCommand.
- * - Limpeza prévia do editor antes da inserção.
- * - Verificação pós-injeção: se o texto estiver duplicado, ele limpa e corrige.
- * ============================================================================
- */
-
-// Garante execução apenas no topo, ignorando iframes invisíveis de anúncios/rastreadores
 if (window.top === window.self) {
-  
-  // Previne registro duplicado de listeners
   if (!window.__fbAutoPostListenerAttached) {
     window.__fbAutoPostListenerAttached = true;
 
@@ -173,7 +246,7 @@ if (window.top === window.self) {
         handleSinglePostExecution(request.payload)
           .then(result => sendResponse(result))
           .catch(err => sendResponse({ success: false, error: err.message }));
-        return true; // Resposta assíncrona
+        return true;
       }
 
       if (request.action === 'EXTRACT_FACEBOOK_GROUPS') {
@@ -183,7 +256,7 @@ if (window.top === window.self) {
       }
     });
 
-    console.log('[AutoPost FB] Content script pronto e blindado contra duplicação 3x.');
+    console.log('[AutoPost FB] Content script pronto no Facebook.');
   }
 }
 
@@ -197,59 +270,69 @@ async function handleSinglePostExecution(data) {
   isPostingCurrently = true;
 
   try {
-    const { text, groupName, postToken } = data;
-    console.log(\`[AutoPost FB] Iniciando postagem com token único \${postToken} para \${groupName}\`);
+    const { text, groupName } = data;
+    console.log('[AutoPost FB] Procurando botão de publicação no grupo:', groupName);
 
-    // 1. Encontra e clica no botão "No que você está pensando?" / "Criar publicação pública..."
-    const composerTrigger = await findComposerTrigger();
-    if (!composerTrigger) {
-      throw new Error('Caixa de criação de publicação não encontrada. Verifique se você é membro do grupo.');
+    // 1. Localiza e clica no gatilho de publicação do grupo
+    const trigger = await findComposerTrigger();
+    if (!trigger) {
+      throw new Error('Caixa de publicação não encontrada. Verifique se você é membro ativo deste grupo.');
     }
 
-    composerTrigger.click();
-    await sleep(2500); // Espera o modal do Facebook abrir
+    trigger.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await sleep(600);
+    trigger.click();
 
-    // 2. Localiza o elemento editável real (Lexical / contenteditable)
+    // 2. Aguarda o modal do Facebook abrir
+    await sleep(2500);
+
+    // 3. Localiza a caixa de texto real (Lexical / contenteditable)
     const editor = await findActiveEditor();
     if (!editor) {
-      throw new Error('Editor de texto do Facebook não encontrado dentro do modal.');
+      throw new Error('Editor de texto do Facebook não abriu dentro do modal.');
     }
 
-    // 3. Foca no editor e limpa qualquer conteúdo residual
+    // 4. Limpa e foca
     editor.focus();
-    await sleep(400);
-
-    // Seleciona tudo e remove resíduos
-    document.execCommand('selectAll', false, null);
-    document.execCommand('delete', false, null);
     await sleep(300);
 
-    // 4. INJEÇÃO ÚNICA E SEGURA (APENAS 1 VEZ)
-    // Usamos DataTransfer simulando colar real, ou document.execCommand atômico sem triggers extras
-    const insertSuccess = insertTextSafely(editor, text);
-    if (!insertSuccess) {
-      throw new Error('Falha ao injetar texto no editor Lexical.');
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.execCommand('delete', false, null);
+    await sleep(200);
+
+    // 5. Inserção atômica única com eventos React do Facebook
+    document.execCommand('insertText', false, text);
+    editor.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+
+    await sleep(1500);
+
+    // 6. Verificação defensiva anti-triplicação
+    if (editor.innerText.trim().length > text.trim().length * 1.8) {
+      range.selectNodeContents(editor);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('delete', false, null);
+      document.execCommand('insertText', false, text.trim());
     }
 
     await sleep(1500);
 
-    // 5. Verificação anti-triplicação: confere se o texto não repetiu
-    validateAndFixTripleContent(editor, text);
-
-    await sleep(1200);
-
-    // 6. Localiza o botão "Publicar" / "Post"
-    const submitBtn = findSubmitButton();
+    // 7. Encontra botão Publicar
+    const submitBtn = await waitForSubmitButton();
     if (!submitBtn) {
-      throw new Error('Botão Publicar não encontrado ou está desabilitado.');
+      throw new Error('Botão Publicar não ficou habilitado após digitar o texto.');
     }
 
-    // Simula clique humano
     submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await sleep(800);
+    await sleep(600);
     submitBtn.click();
 
-    console.log('[AutoPost FB] Publicação enviada com sucesso! Aguardando confirmação do DOM...');
+    console.log('[AutoPost FB] Publicação enviada no Facebook!');
     await sleep(4000);
 
     isPostingCurrently = false;
@@ -262,93 +345,31 @@ async function handleSinglePostExecution(data) {
   }
 }
 
-/**
- * Insere o texto EXATAMENTE UMA VEZ no editor do Facebook
- */
-function insertTextSafely(editor, text) {
-  try {
-    editor.focus();
-
-    // Tenta evento de paste com ClipboardData
-    const dt = new DataTransfer();
-    dt.setData('text/plain', text);
-    const pasteEvent = new ClipboardEvent('paste', {
-      bubbles: true,
-      cancelable: true,
-      clipboardData: dt
-    });
-    
-    const wasNotPrevented = editor.dispatchEvent(pasteEvent);
-
-    // Se o evento não inseriu nada no innerText após 400ms, usa o fallback único
-    if (editor.innerText.trim().length === 0) {
-      document.execCommand('insertText', false, text);
-    }
-
-    return true;
-  } catch (e) {
-    console.warn('[AutoPost FB] Tentativa fallback de insertText');
-    return document.execCommand('insertText', false, text);
-  }
-}
-
-/**
- * Validação Defensiva: Se por algum comportamento do Lexical o texto tiver sido colado 3 vezes,
- * substitui pelo texto limpo unitário.
- */
-function validateAndFixTripleContent(editor, singleText) {
-  const currentText = editor.innerText.trim();
-  const rawClean = singleText.trim();
-
-  // Verifica se o texto atual é exatamente o triplo ou duplo do original
-  if (currentText.length > rawClean.length * 1.8) {
-    console.warn('[AutoPost FB] Alerta de duplicação detectado! Corrigindo automaticamente...');
-    document.execCommand('selectAll', false, null);
-    document.execCommand('delete', false, null);
-    document.execCommand('insertText', false, rawClean);
-  }
-}
-
-/**
- * Encontra o gatilho da caixa de postagem
- */
 async function findComposerTrigger() {
-  const selectors = [
-    'div[role="button"][tabindex="0"] span:has-text("No que você está pensando")',
-    'div[role="button"] span:has-text("Criar publicação")',
-    'div[role="button"] span:has-text("Escreva algo")',
-    'div[data-pagelet="GroupInlineComposer"] [role="button"]',
-    'div[aria-label*="Criar publicação"]',
-    'div[aria-label*="No que você está pensando"]'
-  ];
-
-  for (let i = 0; i < 15; i++) {
-    // Busca por texto visível
-    const allButtons = Array.from(document.querySelectorAll('div[role="button"], span'));
-    for (const el of allButtons) {
-      const text = el.innerText || '';
+  for (let i = 0; i < 20; i++) {
+    // Busca por botões que abrem o composer
+    const elements = Array.from(document.querySelectorAll('div[role="button"], span'));
+    for (const el of elements) {
+      const text = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase();
       if (
-        text.includes('No que você está pensando') ||
-        text.includes('Escreva algo') ||
-        text.includes('Criar publicação') ||
-        text.includes('Write something')
+        text.includes('no que você está pensando') ||
+        text.includes('escreva algo') ||
+        text.includes('criar publicação') ||
+        text.includes('crie uma publicação') ||
+        text.includes('write something')
       ) {
         return el.closest('div[role="button"]') || el;
       }
     }
-    await sleep(500);
+    await sleep(400);
   }
   return null;
 }
 
-/**
- * Encontra a caixa editável real no modal aberto
- */
 async function findActiveEditor() {
   for (let i = 0; i < 15; i++) {
-    const editors = document.querySelectorAll('div[role="textbox"][contenteditable="true"]');
+    const editors = document.querySelectorAll('div[role="dialog"] div[role="textbox"][contenteditable="true"], div[role="textbox"][contenteditable="true"]');
     if (editors.length > 0) {
-      // Retorna o último (geralmente dentro do modal de diálogo no topo do DOM)
       return editors[editors.length - 1];
     }
     await sleep(400);
@@ -356,30 +377,23 @@ async function findActiveEditor() {
   return null;
 }
 
-/**
- * Encontra o botão "Publicar" / "Postar" ativo
- */
-function findSubmitButton() {
-  const candidates = Array.from(document.querySelectorAll('div[aria-label="Publicar"], div[aria-label="Post"], div[role="button"]'));
-  for (const btn of candidates) {
-    const text = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase();
-    if (text === 'publicar' || text === 'post' || text.includes('publicar')) {
-      const ariaDisabled = btn.getAttribute('aria-disabled');
-      if (ariaDisabled !== 'true') {
-        return btn;
+async function waitForSubmitButton() {
+  for (let i = 0; i < 15; i++) {
+    const buttons = Array.from(document.querySelectorAll('div[aria-label="Publicar"], div[aria-label="Post"], div[role="button"]'));
+    for (const btn of buttons) {
+      const text = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase();
+      if (text === 'publicar' || text === 'post' || text.includes('publicar')) {
+        const ariaDisabled = btn.getAttribute('aria-disabled');
+        if (ariaDisabled !== 'true') {
+          return btn;
+        }
       }
     }
+    await sleep(400);
   }
   return null;
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
- * Extrai automaticamente todos os grupos do Facebook que o usuário participa
- */
 function extractUserGroupsFromPage() {
   const anchors = Array.from(document.querySelectorAll('a[href*="/groups/"]'));
   const found = new Map();
@@ -414,6 +428,10 @@ function extractUserGroupsFromPage() {
   }
 
   return Array.from(found.values());
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 `;
 
@@ -517,8 +535,8 @@ function extractUserGroupsFromPage() {
       <span class="status-val" id="fbStatus">Verificando...</span>
     </div>
     <div class="status-item">
-      <span>Proteção Anti-Ban:</span>
-      <span class="status-val">Human Keystrokes</span>
+      <span>Ponte Web Dashboard:</span>
+      <span class="badge">Ativa</span>
     </div>
   </div>
 
@@ -564,26 +582,32 @@ document.addEventListener('DOMContentLoaded', async () => {
 4. Ative a chave **"Modo do desenvolvedor"** no canto superior direito.
 5. Clique no botão **"Carregar sem compactação"** (Load unpacked).
 6. Selecione a pasta descompactada onde está o arquivo \`manifest.json\`.
-7. Pronto! A extensão estará instalada com a blindagem anti-duplicação (1x) ativa.
+7. Pronto! A extensão estará instalada com a ponte automática e a blindagem anti-duplicação ativas.
 `;
 
   return [
     {
       name: 'manifest.json',
       path: 'manifest.json',
-      description: 'Configuração do Manifesto Chrome V3 e permissões',
+      description: 'Configuração do Manifesto Chrome V3, permissões e ponte de comunicação',
       content: manifest,
+    },
+    {
+      name: 'bridge.js',
+      path: 'bridge.js',
+      description: 'Ponte de comunicação bidirecional entre o painel web e o navegador Chrome',
+      content: bridge,
     },
     {
       name: 'content.js',
       path: 'content.js',
-      description: 'Script injetor DOM com correção definitiva da triplicação (Lexical safe)',
+      description: 'Script injetor DOM real do Facebook com verificação e publicação atômica',
       content: content,
     },
     {
       name: 'background.js',
       path: 'background.js',
-      description: 'Service worker assíncrono com trava de concorrência e delays humanos',
+      description: 'Service worker assíncrono que abre abas reais e controla o fluxo de envio',
       content: background,
     },
     {
