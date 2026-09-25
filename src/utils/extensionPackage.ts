@@ -1032,7 +1032,7 @@ export async function downloadExtensionZip(): Promise<void> {
 
   const a = document.createElement('a');
   a.href = url;
-  a.download = `autopost-fb-extensao-v3.3.zip`;
+  a.download = `autopost-fb-extensao-v${EXTENSION_VERSION}.zip`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

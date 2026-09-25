@@ -14,6 +14,7 @@ import {
   Zap,
   Sparkles
 } from 'lucide-react';
+import { EXTENSION_VERSION } from '../../utils/extensionPackage';
 
 interface ExtensionInstallerModalProps {
   isOpen: boolean;
@@ -90,11 +91,11 @@ export const ExtensionInstallerModal: React.FC<ExtensionInstallerModalProps> = (
                 </span>
                 <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  Pronta para v3.3
+                  Pronta para v{EXTENSION_VERSION}
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Arquivo gerado: <strong className="text-white font-mono">autopost-fb-extensao-v3.3.zip</strong>
+                Arquivo gerado: <strong className="text-white font-mono">autopost-fb-extensao-v{EXTENSION_VERSION}.zip</strong>
               </p>
             </div>
 
@@ -127,10 +128,10 @@ export const ExtensionInstallerModal: React.FC<ExtensionInstallerModalProps> = (
             <div className="flex-1">
               <h4 className="text-sm font-bold text-white flex items-center gap-2">
                 <Download className="w-4 h-4 text-blue-400" />
-                Baixar o Arquivo da Extensão v3.3
+                Baixar o Arquivo da Extensão v{EXTENSION_VERSION}
               </h4>
               <p className="text-xs text-slate-300 mt-0.5 leading-relaxed">
-                Clique no botão azul acima para baixar o arquivo <strong>autopost-fb-extensao-v3.3.zip</strong>. Ele contém a blindagem anti-duplicação 1x.
+                Clique no botão azul acima para baixar o arquivo <strong>autopost-fb-extensao-v{EXTENSION_VERSION}.zip</strong>. Ele contém a blindagem definitiva contra duplicação de texto e suporte completo ao botão Postar e fotos.
               </p>
             </div>
           </div>

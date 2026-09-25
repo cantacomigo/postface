@@ -11,6 +11,7 @@ import {
   Zap, 
   Sparkles 
 } from 'lucide-react';
+import { EXTENSION_VERSION } from '../utils/extensionPackage';
 
 interface HeaderProps {
   activeTab: string;
@@ -52,7 +53,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
                 <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3" />
-                  Anti-Ban 3.3 (Fix 1x)
+                  Anti-Ban v{EXTENSION_VERSION} (Fix 1x)
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 hidden sm:block">
