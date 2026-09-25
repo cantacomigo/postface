@@ -7,7 +7,7 @@ export interface ExtensionFile {
   content: string;
 }
 
-export const EXTENSION_VERSION = '3.3.1';
+export const EXTENSION_VERSION = '3.3.2';
 
 export function getExtensionFiles(): ExtensionFile[] {
   const manifest = `{
@@ -356,7 +356,7 @@ async function handleSinglePostExecution(data) {
   isPostingCurrently = true;
 
   try {
-    const { text, groupName, mediaUrls } = data;
+    const { text, groupName, mediaDataUrl, mediaUrls } = data;
     console.log('[AutoPost FB] 🎯 Iniciando publicação no grupo:', groupName);
 
     // 1. Localiza o gatilho de publicação do grupo (ex: "Escreva algo...")
@@ -370,6 +370,8 @@ async function handleSinglePostExecution(data) {
 
     // 2. Aguarda o modal do Facebook abrir
     await sleep(2500);
+
+    const dialog = document.querySelector('[role="dialog"]') || document;
 
     // 3. Localiza a caixa de texto real (Lexical / contenteditable)
     const editor = await findActiveEditor();
@@ -595,6 +597,74 @@ function simulateHumanClick(element) {
       pointTarget.click();
     }
   } catch (e) {}
+}
+
+async function findComposerTrigger() {
+  console.log('[AutoPost FB] 🔍 Procurando caixa oficial de postagem do grupo (ignorando comentários)...');
+  for (let i = 0; i < 30; i++) {
+    // 1. Procura primeiro no GroupInlineComposer oficial
+    const inlineComposer = document.querySelector('[data-pagelet="GroupInlineComposer"]');
+    if (inlineComposer) {
+      const btn = inlineComposer.querySelector('[role="button"]') || 
+                  inlineComposer.querySelector('div[tabindex="0"]') || 
+                  inlineComposer;
+      console.log('[AutoPost FB] ✅ Encontrado via [data-pagelet="GroupInlineComposer"]');
+      return btn;
+    }
+
+    // 2. Busca elementos no topo da página (antes do feed de postagens)
+    const candidates = Array.from(document.querySelectorAll('div[role="button"], span, div[tabindex="0"]'));
+    for (const el of candidates) {
+      // REGRA DE OURO: SE ESTIVER DENTRO DE UM POST OU COMENTÁRIO, IGNORA!
+      if (
+        el.closest('[role="article"]') || 
+        el.closest('form') || 
+        el.closest('[aria-label*="coment"]') ||
+        el.closest('[data-testid*="comment"]')
+      ) {
+        continue;
+      }
+
+      const text = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase().trim();
+
+      // Ignora qualquer menção a comentários
+      if (
+        text.includes('comentário') || 
+        text.includes('comentario') || 
+        text.includes('comment') || 
+        text.includes('responder') ||
+        text.includes('resposta')
+      ) {
+        continue;
+      }
+
+      // Deve ser o gatilho oficial de criação de nova publicação no grupo
+      if (
+        text.startsWith('escreva algo') ||
+        text.startsWith('no que você está pensando') ||
+        text.startsWith('criar publicação') ||
+        text.startsWith('crie uma publicação') ||
+        text.startsWith('write something')
+      ) {
+        const btn = el.closest('[role="button"]') || el;
+        console.log('[AutoPost FB] ✅ Encontrado gatilho autêntico do grupo:', text);
+        return btn;
+      }
+    }
+    await sleep(400);
+  }
+  return null;
+}
+
+async function findActiveEditor() {
+  for (let i = 0; i < 20; i++) {
+    const editors = document.querySelectorAll('div[role="dialog"] div[role="textbox"][contenteditable="true"], div[role="textbox"][contenteditable="true"]');
+    if (editors.length > 0) {
+      return editors[editors.length - 1];
+    }
+    await sleep(400);
+  }
+  return null;
 }
 
 function isButtonEnabled(el) {
