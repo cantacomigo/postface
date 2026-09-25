@@ -44,9 +44,7 @@ export function getExtensionFiles(): ExtensionFile[] {
     },
     {
       "matches": [
-        "https://*/*",
-        "http://localhost/*",
-        "http://localhost:*/*"
+        "*://*/*"
       ],
       "js": ["bridge.js"],
       "run_at": "document_start",
@@ -59,8 +57,14 @@ export function getExtensionFiles(): ExtensionFile[] {
 window.__AUTOPOST_FB_EXTENSION_INSTALLED__ = true;
 window.__AUTOPOST_FB_VERSION__ = "${EXTENSION_VERSION}";
 
-// Notifica imediatamente o painel web que a extensão está instalada e ativa
-window.postMessage({ type: 'AUTOPOST_EXTENSION_READY', version: "${EXTENSION_VERSION}" }, '*');
+function broadcastPresence() {
+  window.__AUTOPOST_FB_EXTENSION_INSTALLED__ = true;
+  window.postMessage({ type: 'AUTOPOST_EXTENSION_READY', version: "${EXTENSION_VERSION}" }, '*');
+  window.postMessage({ type: 'AUTOPOST_PONG', version: "${EXTENSION_VERSION}" }, '*');
+}
+
+broadcastPresence();
+setInterval(broadcastPresence, 1500);
 
 // Escuta comandos vindos do Painel Web (React App)
 window.addEventListener('message', (event) => {
@@ -154,9 +158,42 @@ function notifyDashboard(action, payload) {
   }
 }
 
+async function convertUrlToBase64DataUrl(imageUrl) {
+  if (!imageUrl) return null;
+  if (imageUrl.startsWith('data:')) return imageUrl;
+  try {
+    const res = await fetch(imageUrl);
+    const blob = await res.blob();
+    const arrayBuffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const b64 = btoa(binary);
+    const mime = blob.type || 'image/jpeg';
+    return \`data:\${mime};base64,\${b64}\`;
+  } catch (err) {
+    console.warn('[AutoPost FB] Falha ao pré-carregar imagem no background:', err);
+    return null;
+  }
+}
+
 async function runCampaignWorkflow(campaign) {
   const { groups, template, antiBan } = campaign;
-  console.log(\`[AutoPost FB] Iniciando postagem REAL para \${groups.length} grupos.\`);
+  console.log(\`[AutoPost FB] Iniciando postagem 100% AUTOMÁTICA para \${groups.length} grupos.\`);
+
+  // Pré-carrega a imagem do template uma única vez no background sem bloqueios de CSP
+  let mediaDataUrl = null;
+  if (template.mediaUrls && template.mediaUrls.length > 0 && template.mediaUrls[0]) {
+    notifyDashboard('CAMPAIGN_STEP_UPDATE', {
+      groupIndex: 0,
+      groupName: groups[0]?.name || '',
+      step: 'Carregando e preparando imagem para anexo automático...'
+    });
+    mediaDataUrl = await convertUrlToBase64DataUrl(template.mediaUrls[0]);
+  }
 
   for (let i = 0; i < groups.length; i++) {
     if (!isBusy) break;
@@ -176,7 +213,7 @@ async function runCampaignWorkflow(campaign) {
       notifyDashboard('CAMPAIGN_STEP_UPDATE', {
         groupIndex: i,
         groupName: group.name,
-        step: \`[2/4] Injetando publicação e digitando texto...\`
+        step: \`[2/4] Injetando texto e anexando imagem automaticamente...\`
       });
 
       // 2. Dispara injeção real no Facebook com listener dedicado de resposta
@@ -189,20 +226,21 @@ async function runCampaignWorkflow(campaign) {
         };
         chrome.runtime.onMessage.addListener(resultListener);
 
-        // Timeout de segurança de 35s
+        // Timeout de segurança de 40s
         setTimeout(() => {
           chrome.runtime.onMessage.removeListener(resultListener);
           resolve({ success: false, error: 'Tempo limite esgotado aguardando confirmação do Facebook.' });
-        }, 35000);
+        }, 40000);
       });
 
-      // Envia comando para a aba do Facebook
+      // Envia comando para a aba do Facebook com a imagem já em Base64 pronta
       await chrome.tabs.sendMessage(fbTab.id, {
         action: 'EXECUTE_POST',
         payload: {
           groupId: group.id,
           groupName: group.name,
           text: template.text,
+          mediaDataUrl: mediaDataUrl,
           mediaUrls: template.mediaUrls || [],
           postToken: 'POST_' + Date.now() + '_' + Math.random().toString(36).substring(7)
         }
@@ -357,16 +395,17 @@ async function handleSinglePostExecution(data) {
     document.execCommand('insertText', false, text);
     await sleep(1500);
 
-    // Anexa imagem se fornecida no template
-    if (mediaUrls && Array.isArray(mediaUrls) && mediaUrls.length > 0 && mediaUrls[0]) {
-      console.log('[AutoPost FB] 🖼️ Anexando imagem selecionada do template...');
-      await attachImageToComposer(mediaUrls[0], editor);
-      await sleep(2000);
+    // 4. Se houver imagem associada ao template, anexa automaticamente
+    const imagePayload = mediaDataUrl || (mediaUrls && mediaUrls[0]);
+    if (imagePayload) {
+      console.log('[AutoPost FB] 🖼️ Anexando imagem ao post automaticamente...');
+      await attachImageToFacebook(imagePayload, dialog, editor);
+      await sleep(3000); // Aguarda upload e preview da imagem no Facebook
     }
 
     await sleep(1000);
 
-    // 4. Encontra botão Postar / Publicar habilitado
+    // 5. Encontra botão Postar / Publicar habilitado
     const submitBtn = await waitForSubmitButton();
     if (submitBtn) {
       console.log('[AutoPost FB] 🚀 Clicando no botão Postar/Publicar...');
@@ -411,33 +450,89 @@ async function handleSinglePostExecution(data) {
   }
 }
 
-async function attachImageToComposer(imageUrl, editor) {
+function dataUrlToFile(dataUrl, filename = 'foto_publicacao.jpg') {
   try {
-    const response = await fetch(imageUrl);
-    const blob = await response.blob();
-    const file = new File([blob], 'publicacao_fb.jpg', { type: blob.type || 'image/jpeg' });
+    const parts = dataUrl.split(',');
+    const mimeMatch = parts[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const bstr = atob(parts[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new File([u8arr], filename, { type: mime });
+  } catch (e) {
+    console.warn('[AutoPost FB] Erro ao converter dataUrl para File:', e);
+    return null;
+  }
+}
+
+async function attachImageToFacebook(mediaDataUrl, dialog, editor) {
+  try {
+    if (!mediaDataUrl) return false;
+    
+    // Se for URL externa em vez de dataUrl, tenta converter
+    let file = null;
+    if (mediaDataUrl.startsWith('data:')) {
+      file = dataUrlToFile(mediaDataUrl, 'foto_' + Date.now() + '.jpg');
+    } else {
+      try {
+        const r = await fetch(mediaDataUrl);
+        const b = await r.blob();
+        file = new File([b], 'foto_' + Date.now() + '.jpg', { type: b.type || 'image/jpeg' });
+      } catch (e) {}
+    }
+
+    if (!file) return false;
+
     const dt = new DataTransfer();
     dt.items.add(file);
 
-    // Injeta diretamente no input[type="file"] do modal do Facebook se disponível
-    const fileInput = document.querySelector('[role="dialog"] input[type="file"], input[type="file"][accept*="image"]');
-    if (fileInput) {
-      fileInput.files = dt.files;
-      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(2000);
-      return;
+    // Passo 1: Localiza e clica no botão "Foto/vídeo" na barra "Adicionar ao post"
+    console.log('[AutoPost FB] 🔍 Procurando botão Foto/vídeo para ativar o seletor...');
+    const photoButtons = Array.from(dialog.querySelectorAll('[aria-label*="Foto"], [aria-label*="foto"], [aria-label*="Photo"], [aria-label*="photo"], div[role="button"]'));
+    let photoBtn = null;
+    for (const b of photoButtons) {
+      const lbl = (b.getAttribute('aria-label') || b.innerText || '').toLowerCase();
+      if ((lbl.includes('foto') || lbl.includes('photo')) && !lbl.includes('perfil') && !lbl.includes('capa')) {
+        photoBtn = b.closest('[role="button"]') || b;
+        break;
+      }
     }
 
-    // Fallback: cola o arquivo no editor
+    if (photoBtn) {
+      console.log('[AutoPost FB] 🖱️ Clicando em Foto/vídeo...');
+      simulateHumanClick(photoBtn);
+      await sleep(1500);
+    }
+
+    // Passo 2: Localiza o input[type="file"] do Facebook
+    let fileInput = dialog.querySelector('input[type="file"]') || document.querySelector('input[type="file"]');
+    if (fileInput) {
+      console.log('[AutoPost FB] 📥 Injetando arquivo de imagem no input[type="file"]...');
+      fileInput.files = dt.files;
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await sleep(3500);
+      console.log('[AutoPost FB] ✅ Imagem carregada no Facebook!');
+      return true;
+    }
+
+    // Passo 3: Se não encontrou o input file, dispara ClipboardEvent paste diretamente no editor
+    console.log('[AutoPost FB] 📋 Colando imagem via área de transferência no editor Lexical...');
+    editor.focus();
     const pasteEvent = new ClipboardEvent('paste', {
       bubbles: true,
       cancelable: true,
       clipboardData: dt
     });
     editor.dispatchEvent(pasteEvent);
-    await sleep(2000);
-  } catch (e) {
-    console.warn('[AutoPost FB] Aviso ao anexar imagem:', e);
+    await sleep(3000);
+    return true;
+  } catch (err) {
+    console.warn('[AutoPost FB] Erro ao anexar imagem:', err);
+    return false;
   }
 }
 

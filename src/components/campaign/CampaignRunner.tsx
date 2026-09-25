@@ -157,39 +157,40 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
       return;
     }
 
-    if (isExtensionConnected) {
-      // MODO 100% AUTOMÁTICO REAL: Comanda a extensão Chrome
-      setIsRunning(true);
-      setIsPaused(false);
-      setCurrentIndex(0);
-      setCurrentStep('Enviando comando para a extensão Chrome...');
+    // MODO 100% AUTOMÁTICO REAL: Comanda a extensão Chrome
+    setIsRunning(true);
+    setIsPaused(false);
+    setCurrentIndex(0);
+    setCurrentStep('Iniciando automação 100% autônoma no Facebook...');
 
-      const firstGroup = selectedGroups[0];
-      const text = renderTemplate(
-        activeTemplate.bodyWithSpintax,
-        { nome_grupo: firstGroup.name, categoria: firstGroup.category },
-        { useZeroWidthSpaces: antiBanConfig.zeroWidthRandomizer }
-      );
-      setActivePreviewText(text);
+    const firstGroup = selectedGroups[0];
+    const text = renderTemplate(
+      activeTemplate.bodyWithSpintax,
+      { nome_grupo: firstGroup.name, categoria: firstGroup.category },
+      { useZeroWidthSpaces: antiBanConfig.zeroWidthRandomizer }
+    );
+    setActivePreviewText(text);
 
-      window.postMessage({
-        type: 'AUTOPOST_START_CAMPAIGN',
-        payload: {
-          groups: selectedGroups,
-          template: { ...activeTemplate, text },
-          antiBan: {
-            minDelay: antiBanConfig.minDelaySeconds,
-            maxDelay: antiBanConfig.maxDelaySeconds,
-          }
+    // Envia comando para a extensão Chrome com o texto e as imagens
+    window.postMessage({
+      type: 'AUTOPOST_START_CAMPAIGN',
+      payload: {
+        groups: selectedGroups,
+        template: {
+          ...activeTemplate,
+          text,
+          mediaUrls: activeTemplate.mediaUrls || []
+        },
+        antiBan: {
+          minDelay: antiBanConfig.minDelaySeconds,
+          maxDelay: antiBanConfig.maxDelaySeconds,
         }
-      }, '*');
+      }
+    }, '*');
 
-    } else {
-      // MODO ASSISTIDO: Sem extensão carregada, não finge! Oferece o modo assistido direto
-      setIsRunning(true);
-      setIsPaused(false);
-      setCurrentIndex(0);
-      prepareAssistedPost(0);
+    // Se a extensão demorar a responder nos primeiros 4 segundos, alerta na barra de status
+    if (!isExtensionConnected) {
+      setCurrentStep('Conectando à extensão Chrome... Certifique-se de que a extensão está ativada.');
     }
   };
 
@@ -558,61 +559,21 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
         </div>
       </div>
 
-      {/* MODAL MODO ASSISTIDO (Quando a extensão não está conectada) */}
-      {showAssistedModal && currentAssistedGroup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xl overflow-hidden shadow-2xl p-6 space-y-5">
-            <div className="flex items-start justify-between border-b border-slate-800 pb-3">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400">
-                  Grupo #{currentIndex + 1} de {selectedGroups.length}
-                </span>
-                <h3 className="text-lg font-bold text-white mt-0.5">
-                  {currentAssistedGroup.name}
-                </h3>
-              </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                Postagem Real
-              </span>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
-              <p className="text-xs text-slate-300 leading-relaxed">
-                1. Clique no botão abaixo para <strong>copiar o texto e abrir a página real do grupo no Facebook</strong>:
-              </p>
-
-              <button
-                onClick={() => handleOpenGroupAndCopy(currentAssistedGroup)}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center justify-center gap-2 active:scale-95"
-              >
-                {assistedCopied ? <Check className="w-4 h-4 text-emerald-300" /> : <ExternalLink className="w-4 h-4" />}
-                <span>
-                  {assistedCopied ? 'Texto Copiado! Aba do Grupo Aberta ✅' : 'Copiar Texto + Abrir Grupo no Facebook'}
-                </span>
-              </button>
-
-              <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
-                2. Na aba aberta do Facebook, clique na caixa <em>"No que você está pensando?"</em>, pressione <strong className="text-white">Ctrl + V</strong> e clique no botão azul <strong>"Publicar"</strong>.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <button
-                onClick={stopCampaign}
-                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition"
-              >
-                Parar Campanha
-              </button>
-
-              <button
-                onClick={() => handleConfirmAssistedPost(currentAssistedGroup)}
-                className="px-6 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl shadow-lg transition flex items-center gap-1.5 active:scale-95"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Confirmar que Foi Publicado</span>
-              </button>
-            </div>
+      {/* Status de Conexão com o Motor Autônomo */}
+      {!isExtensionConnected && isRunning && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex items-center justify-between gap-3 text-amber-300">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-xs font-medium">
+              Aguardando confirmação da Extensão Chrome AutoPost FB... Certifique-se de carregar a extensão em <code className="bg-slate-900 px-1 py-0.5 rounded text-[11px] font-mono">chrome://extensions</code>
+            </span>
           </div>
+          <button
+            onClick={() => window.postMessage({ type: 'AUTOPOST_PING' }, '*')}
+            className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-semibold rounded-lg border border-amber-500/30 transition"
+          >
+            Reconectar
+          </button>
         </div>
       )}
 
