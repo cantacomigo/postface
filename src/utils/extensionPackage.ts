@@ -368,18 +368,29 @@ async function handleSinglePostExecution(data) {
 
     // 4. Encontra botão Postar / Publicar habilitado
     const submitBtn = await waitForSubmitButton();
-    if (!submitBtn) {
-      throw new Error('Botão Postar/Publicar não ficou habilitado após digitar o texto.');
+    if (submitBtn) {
+      console.log('[AutoPost FB] 🚀 Clicando no botão Postar/Publicar...');
+      simulateHumanClick(submitBtn);
+    } else {
+      // Fallback extremo: Envio via atalho nativo de acessibilidade do Facebook (Ctrl + Enter)
+      console.log('[AutoPost FB] ⌨️ Disparando atalho de envio oficial do Facebook (Ctrl+Enter)...');
+      editor.focus();
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      }));
     }
 
-    console.log('[AutoPost FB] 🚀 Clicando no botão Postar/Publicar...');
-    simulateHumanClick(submitBtn);
-
     // Aguarda e verifica se o diálogo fechou; se persistir, re-aplica o clique de envio
-    await sleep(2500);
+    await sleep(3000);
     const stillOpenDialog = document.querySelector('[role="dialog"]');
     if (stillOpenDialog) {
-      const retryBtn = await waitForSubmitButton();
+      const retryBtn = findSubmitButtonQuick(stillOpenDialog);
       if (retryBtn) {
         console.log('[AutoPost FB] 🔄 Confirmando clique no botão de publicação...');
         simulateHumanClick(retryBtn);
@@ -388,7 +399,7 @@ async function handleSinglePostExecution(data) {
     }
 
     console.log('[AutoPost FB] 🎉 Publicação enviada com sucesso no Facebook!');
-    await sleep(3000);
+    await sleep(2500);
 
     isPostingCurrently = false;
     return { success: true, timestamp: new Date().toISOString() };
@@ -431,24 +442,64 @@ async function attachImageToComposer(imageUrl, editor) {
 }
 
 function simulateHumanClick(element) {
-  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (!element) return;
+  try {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (e) {}
+
   const rect = element.getBoundingClientRect();
+  const clientX = rect.left + rect.width / 2;
+  const clientY = rect.top + rect.height / 2;
   const opts = {
     bubbles: true,
     cancelable: true,
     view: window,
-    clientX: rect.left + rect.width / 2,
-    clientY: rect.top + rect.height / 2
+    clientX,
+    clientY,
+    buttons: 1
   };
-  element.dispatchEvent(new MouseEvent('pointerdown', opts));
-  element.dispatchEvent(new MouseEvent('mousedown', opts));
-  if (typeof element.focus === 'function') element.focus();
-  element.dispatchEvent(new MouseEvent('mouseup', opts));
-  element.dispatchEvent(new MouseEvent('pointerup', opts));
-  element.dispatchEvent(new MouseEvent('click', opts));
-  if (typeof element.click === 'function') {
-    element.click();
-  }
+
+  try {
+    if (typeof window.PointerEvent === 'function') {
+      element.dispatchEvent(new PointerEvent('pointerdown', opts));
+    }
+  } catch (e) {}
+
+  try {
+    element.dispatchEvent(new MouseEvent('mousedown', opts));
+  } catch (e) {}
+
+  try {
+    if (typeof element.focus === 'function') element.focus();
+  } catch (e) {}
+
+  try {
+    element.dispatchEvent(new MouseEvent('mouseup', opts));
+  } catch (e) {}
+
+  try {
+    if (typeof window.PointerEvent === 'function') {
+      element.dispatchEvent(new PointerEvent('pointerup', opts));
+    }
+  } catch (e) {}
+
+  try {
+    element.dispatchEvent(new MouseEvent('click', opts));
+  } catch (e) {}
+
+  try {
+    if (typeof element.click === 'function') {
+      element.click();
+    }
+  } catch (e) {}
+
+  // Se houver um sub-elemento no ponto exato, aciona também
+  try {
+    const pointTarget = document.elementFromPoint(clientX, clientY);
+    if (pointTarget && pointTarget !== element && typeof pointTarget.click === 'function') {
+      pointTarget.click();
+    }
+  } catch (e) {}
 }
 
 function isButtonEnabled(el) {
@@ -466,15 +517,39 @@ async function waitForSubmitButton() {
   for (let i = 0; i < 25; i++) {
     const dialog = document.querySelector('[role="dialog"]') || document;
     
-    // Lista de termos aceitos para o botão de envio
-    const validTerms = ['postar', 'publicar', 'post', 'publicar publicação', 'compartilhar', 'share'];
-    const candidates = Array.from(dialog.querySelectorAll('[role="button"], button, div[tabindex="0"]'));
+    // 1. Busca por seletores diretos de aria-label
+    const directAria = Array.from(dialog.querySelectorAll(
+      '[aria-label="Postar"], [aria-label="Publicar"], [aria-label="Post"], [aria-label="Publicar publicação"], [aria-label="Publicar post"], [aria-label="Share"]'
+    ));
+    for (const el of directAria) {
+      if (isButtonEnabled(el)) {
+        console.log('[AutoPost FB] ✅ Botão encontrado via seletor direto de aria-label:', el.getAttribute('aria-label'));
+        return el;
+      }
+    }
 
+    // 2. Busca por nó de texto folha ("Postar" / "Publicar" / "Post")
+    const allTextLeaves = Array.from(dialog.querySelectorAll('span, div, b, strong'));
+    for (const leaf of allTextLeaves) {
+      if (leaf.children.length === 0) {
+        const txt = leaf.textContent ? leaf.textContent.trim().toLowerCase() : '';
+        if (txt === 'postar' || txt === 'publicar' || txt === 'post') {
+          const clickable = leaf.closest('[role="button"]') || leaf.closest('button') || leaf.parentElement || leaf;
+          if (isButtonEnabled(clickable)) {
+            console.log('[AutoPost FB] ✅ Botão encontrado via nó de texto folha:', txt);
+            return clickable;
+          }
+        }
+      }
+    }
+
+    // 3. Busca geral com exclusões estritas
+    const candidates = Array.from(dialog.querySelectorAll('[role="button"], button, div[tabindex="0"]'));
     for (const btn of candidates) {
       const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
       const rawText = (btn.innerText || '').toLowerCase().trim();
 
-      // Exclusões estritas: NÃO clicar em controles secundários
+      // Exclusões estritas
       if (
         ariaLabel.includes('fechar') || 
         ariaLabel.includes('close') ||
@@ -483,21 +558,14 @@ async function waitForSubmitButton() {
         rawText.includes('adicionar ao') ||
         ariaLabel.includes('adicionar ao') ||
         rawText.includes('foto/vídeo') ||
-        ariaLabel.includes('foto/vídeo') ||
         rawText.includes('marcar') ||
-        ariaLabel.includes('marcar') ||
-        rawText.includes('sentimento') ||
-        ariaLabel.includes('sentimento')
+        rawText.includes('sentimento')
       ) {
         continue;
       }
 
-      // Checa se o texto ou o aria-label coincide com os termos de envio do Facebook
-      const isExactMatch = validTerms.includes(rawText) || validTerms.includes(ariaLabel);
-      const isStartMatch = (rawText === 'postar' || rawText === 'publicar' || rawText === 'post' ||
-                            ariaLabel === 'postar' || ariaLabel === 'publicar' || ariaLabel === 'post');
-
-      if (isExactMatch || isStartMatch) {
+      if (rawText === 'postar' || rawText === 'publicar' || rawText === 'post' ||
+          ariaLabel === 'postar' || ariaLabel === 'publicar' || ariaLabel === 'post') {
         if (isButtonEnabled(btn)) {
           console.log('[AutoPost FB] ✅ Botão de envio confirmado e ativo:', rawText || ariaLabel);
           return btn;
@@ -505,19 +573,40 @@ async function waitForSubmitButton() {
       }
     }
 
-    // Fallback: busca pelo último botão clicável do diálogo
+    // 4. Fallback final: o último botão primário do diálogo
     for (let j = candidates.length - 1; j >= 0; j--) {
       const btn = candidates[j];
       const t = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase().trim();
       if ((t === 'postar' || t === 'publicar' || t === 'post') && !t.includes('anonim') && !t.includes('adicion')) {
         if (isButtonEnabled(btn)) {
-          console.log('[AutoPost FB] ✅ Botão primário selecionado pelo fallback:', t);
+          console.log('[AutoPost FB] ✅ Botão selecionado pelo fallback:', t);
           return btn;
         }
       }
     }
 
     await sleep(400);
+  }
+  return null;
+}
+
+function findSubmitButtonQuick(dialog) {
+  if (!dialog) return null;
+  const directAria = Array.from(dialog.querySelectorAll(
+    '[aria-label="Postar"], [aria-label="Publicar"], [aria-label="Post"], [aria-label="Publicar publicação"]'
+  ));
+  for (const el of directAria) {
+    if (isButtonEnabled(el)) return el;
+  }
+  const allTextLeaves = Array.from(dialog.querySelectorAll('span, div, b, strong'));
+  for (const leaf of allTextLeaves) {
+    if (leaf.children.length === 0) {
+      const txt = leaf.textContent ? leaf.textContent.trim().toLowerCase() : '';
+      if (txt === 'postar' || txt === 'publicar' || txt === 'post') {
+        const clickable = leaf.closest('[role="button"]') || leaf.closest('button') || leaf.parentElement || leaf;
+        if (isButtonEnabled(clickable)) return clickable;
+      }
+    }
   }
   return null;
 }
