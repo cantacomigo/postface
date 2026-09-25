@@ -271,17 +271,16 @@ async function handleSinglePostExecution(data) {
 
   try {
     const { text, groupName } = data;
-    console.log('[AutoPost FB] Procurando botão de publicação no grupo:', groupName);
+    console.log('[AutoPost FB] 🎯 Iniciando publicação no grupo:', groupName);
 
-    // 1. Localiza e clica no gatilho de publicação do grupo
+    // 1. Localiza o gatilho de publicação do grupo (ex: "Escreva algo...")
     const trigger = await findComposerTrigger();
     if (!trigger) {
       throw new Error('Caixa de publicação não encontrada. Verifique se você é membro ativo deste grupo.');
     }
 
-    trigger.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await sleep(600);
-    trigger.click();
+    console.log('[AutoPost FB] 🖱️ Clicando na caixa de criação...');
+    simulateHumanClick(trigger);
 
     // 2. Aguarda o modal do Facebook abrir
     await sleep(2500);
@@ -292,47 +291,42 @@ async function handleSinglePostExecution(data) {
       throw new Error('Editor de texto do Facebook não abriu dentro do modal.');
     }
 
-    // 4. Limpa e foca
+    console.log('[AutoPost FB] ✍️ Injetando texto no editor...');
     editor.focus();
+    await sleep(400);
+
+    // Limpa conteúdo residual
+    document.execCommand('selectAll', false, null);
+    document.execCommand('delete', false, null);
     await sleep(300);
 
-    const sel = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    sel.removeAllRanges();
-    sel.addRange(range);
-    document.execCommand('delete', false, null);
-    await sleep(200);
-
-    // 5. Inserção atômica única com eventos React do Facebook
+    // Inserção atômica única com eventos React do Facebook
     document.execCommand('insertText', false, text);
     editor.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
-    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
 
     await sleep(1500);
 
-    // 6. Verificação defensiva anti-triplicação
+    // 4. Verificação defensiva anti-triplicação
     if (editor.innerText.trim().length > text.trim().length * 1.8) {
-      range.selectNodeContents(editor);
-      sel.removeAllRanges();
-      sel.addRange(range);
+      console.warn('[AutoPost FB] Detectada duplicação pelo Lexical! Restaurando para 1x...');
+      document.execCommand('selectAll', false, null);
       document.execCommand('delete', false, null);
       document.execCommand('insertText', false, text.trim());
     }
 
     await sleep(1500);
 
-    // 7. Encontra botão Publicar
+    // 5. Encontra botão Publicar habilitado
     const submitBtn = await waitForSubmitButton();
     if (!submitBtn) {
       throw new Error('Botão Publicar não ficou habilitado após digitar o texto.');
     }
 
-    submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await sleep(600);
-    submitBtn.click();
+    console.log('[AutoPost FB] 🚀 Clicando no botão Publicar...');
+    simulateHumanClick(submitBtn);
 
-    console.log('[AutoPost FB] Publicação enviada no Facebook!');
+    console.log('[AutoPost FB] 🎉 Publicação enviada com sucesso no Facebook!');
     await sleep(4000);
 
     isPostingCurrently = false;
@@ -340,34 +334,60 @@ async function handleSinglePostExecution(data) {
 
   } catch (error) {
     isPostingCurrently = false;
-    console.error('[AutoPost FB] Erro:', error);
+    console.error('[AutoPost FB] ❌ Erro:', error);
     return { success: false, error: error.message };
   }
 }
 
+function simulateHumanClick(element) {
+  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const rect = element.getBoundingClientRect();
+  const opts = {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2
+  };
+  element.dispatchEvent(new MouseEvent('mousedown', opts));
+  element.dispatchEvent(new MouseEvent('mouseup', opts));
+  element.dispatchEvent(new MouseEvent('click', opts));
+  if (typeof element.click === 'function') {
+    element.click();
+  }
+}
+
 async function findComposerTrigger() {
-  for (let i = 0; i < 20; i++) {
-    // Busca por botões que abrem o composer
-    const elements = Array.from(document.querySelectorAll('div[role="button"], span'));
+  console.log('[AutoPost FB] 🔍 Procurando caixa de postagem...');
+  for (let i = 0; i < 25; i++) {
+    // 1. Procura por data-pagelet="GroupInlineComposer"
+    const inlineComposer = document.querySelector('[data-pagelet="GroupInlineComposer"]');
+    if (inlineComposer) {
+      const btn = inlineComposer.querySelector('[role="button"]') || inlineComposer;
+      return btn;
+    }
+
+    // 2. Busca por textos característicos na página
+    const elements = Array.from(document.querySelectorAll('div[role="button"], span, div'));
     for (const el of elements) {
-      const text = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase();
+      const text = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase().trim();
       if (
-        text.includes('no que você está pensando') ||
         text.includes('escreva algo') ||
+        text.includes('no que você está pensando') ||
         text.includes('criar publicação') ||
         text.includes('crie uma publicação') ||
         text.includes('write something')
       ) {
-        return el.closest('div[role="button"]') || el;
+        return el.closest('[role="button"]') || el;
       }
     }
-    await sleep(400);
+    await sleep(500);
   }
   return null;
 }
 
 async function findActiveEditor() {
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0; i < 20; i++) {
     const editors = document.querySelectorAll('div[role="dialog"] div[role="textbox"][contenteditable="true"], div[role="textbox"][contenteditable="true"]');
     if (editors.length > 0) {
       return editors[editors.length - 1];
@@ -378,10 +398,12 @@ async function findActiveEditor() {
 }
 
 async function waitForSubmitButton() {
-  for (let i = 0; i < 15; i++) {
-    const buttons = Array.from(document.querySelectorAll('div[aria-label="Publicar"], div[aria-label="Post"], div[role="button"]'));
-    for (const btn of buttons) {
-      const text = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase();
+  console.log('[AutoPost FB] 🔍 Procurando botão Publicar...');
+  for (let i = 0; i < 20; i++) {
+    const dialog = document.querySelector('[role="dialog"]') || document;
+    const candidates = Array.from(dialog.querySelectorAll('[aria-label="Publicar"], [aria-label="Post"], [aria-label="Publicar publicação"], [role="button"]'));
+    for (const btn of candidates) {
+      const text = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase().trim();
       if (text === 'publicar' || text === 'post' || text.includes('publicar')) {
         const ariaDisabled = btn.getAttribute('aria-disabled');
         if (ariaDisabled !== 'true') {
@@ -389,7 +411,7 @@ async function waitForSubmitButton() {
         }
       }
     }
-    await sleep(400);
+    await sleep(500);
   }
   return null;
 }
@@ -411,7 +433,10 @@ function extractUserGroupsFromPage() {
     const groupUrl = 'https://www.facebook.com/groups/' + groupSlug + '/';
     let groupName = (a.innerText || a.getAttribute('aria-label') || '').trim();
 
-    groupName = groupName.split('\\n')[0].replace(/^(Grupo:|\+)/i, '').trim();
+    groupName = groupName.split('\\n')[0].trim();
+    if (groupName.toLowerCase().startsWith('grupo:')) groupName = groupName.slice(6).trim();
+    if (groupName.startsWith('+')) groupName = groupName.slice(1).trim();
+
     if (!groupName || groupName.length < 3 || groupName.toLowerCase() === 'ver tudo' || groupName.toLowerCase() === 'grupos') {
       groupName = 'Grupo ' + groupSlug.replace(/[-_.]/g, ' ');
     }
