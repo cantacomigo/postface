@@ -7,7 +7,7 @@ export interface ExtensionFile {
   content: string;
 }
 
-export const EXTENSION_VERSION = '3.3.0';
+export const EXTENSION_VERSION = '3.3.1';
 
 export function getExtensionFiles(): ExtensionFile[] {
   const manifest = `{
@@ -203,6 +203,7 @@ async function runCampaignWorkflow(campaign) {
           groupId: group.id,
           groupName: group.name,
           text: template.text,
+          mediaUrls: template.mediaUrls || [],
           postToken: 'POST_' + Date.now() + '_' + Math.random().toString(36).substring(7)
         }
       }).catch((err) => {
@@ -317,7 +318,7 @@ async function handleSinglePostExecution(data) {
   isPostingCurrently = true;
 
   try {
-    const { text, groupName } = data;
+    const { text, groupName, mediaUrls } = data;
     console.log('[AutoPost FB] 🎯 Iniciando publicação no grupo:', groupName);
 
     // 1. Localiza o gatilho de publicação do grupo (ex: "Escreva algo...")
@@ -352,24 +353,42 @@ async function handleSinglePostExecution(data) {
     await sleep(300);
 
     // INSERÇÃO ATÔMICA ÚNICA:
-    // O comando 'insertText' já dispara todos os eventos nativos do navegador que o Facebook escuta.
-    // NUNCA disparar InputEvent sintético manual nem reexecutar comandos extras, pois o Facebook
-    // insere o texto para CADA evento recebido!
+    // O comando 'insertText' dispara os eventos nativos do navegador que o Facebook Lexical escuta.
     document.execCommand('insertText', false, text);
+    await sleep(1500);
 
-    await sleep(2000);
-
-    // 4. Encontra botão Publicar habilitado
-    const submitBtn = await waitForSubmitButton();
-    if (!submitBtn) {
-      throw new Error('Botão Publicar não ficou habilitado após digitar o texto.');
+    // Anexa imagem se fornecida no template
+    if (mediaUrls && Array.isArray(mediaUrls) && mediaUrls.length > 0 && mediaUrls[0]) {
+      console.log('[AutoPost FB] 🖼️ Anexando imagem selecionada do template...');
+      await attachImageToComposer(mediaUrls[0], editor);
+      await sleep(2000);
     }
 
-    console.log('[AutoPost FB] 🚀 Clicando no botão Publicar...');
+    await sleep(1000);
+
+    // 4. Encontra botão Postar / Publicar habilitado
+    const submitBtn = await waitForSubmitButton();
+    if (!submitBtn) {
+      throw new Error('Botão Postar/Publicar não ficou habilitado após digitar o texto.');
+    }
+
+    console.log('[AutoPost FB] 🚀 Clicando no botão Postar/Publicar...');
     simulateHumanClick(submitBtn);
 
+    // Aguarda e verifica se o diálogo fechou; se persistir, re-aplica o clique de envio
+    await sleep(2500);
+    const stillOpenDialog = document.querySelector('[role="dialog"]');
+    if (stillOpenDialog) {
+      const retryBtn = await waitForSubmitButton();
+      if (retryBtn) {
+        console.log('[AutoPost FB] 🔄 Confirmando clique no botão de publicação...');
+        simulateHumanClick(retryBtn);
+        await sleep(2500);
+      }
+    }
+
     console.log('[AutoPost FB] 🎉 Publicação enviada com sucesso no Facebook!');
-    await sleep(4000);
+    await sleep(3000);
 
     isPostingCurrently = false;
     return { success: true, timestamp: new Date().toISOString() };
@@ -378,6 +397,36 @@ async function handleSinglePostExecution(data) {
     isPostingCurrently = false;
     console.error('[AutoPost FB] ❌ Erro:', error);
     return { success: false, error: error.message };
+  }
+}
+
+async function attachImageToComposer(imageUrl, editor) {
+  try {
+    const response = await fetch(imageUrl);
+    const blob = await response.blob();
+    const file = new File([blob], 'publicacao_fb.jpg', { type: blob.type || 'image/jpeg' });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+
+    // Injeta diretamente no input[type="file"] do modal do Facebook se disponível
+    const fileInput = document.querySelector('[role="dialog"] input[type="file"], input[type="file"][accept*="image"]');
+    if (fileInput) {
+      fileInput.files = dt.files;
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(2000);
+      return;
+    }
+
+    // Fallback: cola o arquivo no editor
+    const pasteEvent = new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dt
+    });
+    editor.dispatchEvent(pasteEvent);
+    await sleep(2000);
+  } catch (e) {
+    console.warn('[AutoPost FB] Aviso ao anexar imagem:', e);
   }
 }
 
@@ -391,97 +440,84 @@ function simulateHumanClick(element) {
     clientX: rect.left + rect.width / 2,
     clientY: rect.top + rect.height / 2
   };
+  element.dispatchEvent(new MouseEvent('pointerdown', opts));
   element.dispatchEvent(new MouseEvent('mousedown', opts));
+  if (typeof element.focus === 'function') element.focus();
   element.dispatchEvent(new MouseEvent('mouseup', opts));
+  element.dispatchEvent(new MouseEvent('pointerup', opts));
   element.dispatchEvent(new MouseEvent('click', opts));
   if (typeof element.click === 'function') {
     element.click();
   }
 }
 
-async function findComposerTrigger() {
-  console.log('[AutoPost FB] 🔍 Procurando caixa oficial de postagem do grupo (ignorando comentários)...');
-  for (let i = 0; i < 30; i++) {
-    // 1. Procura primeiro no GroupInlineComposer oficial
-    const inlineComposer = document.querySelector('[data-pagelet="GroupInlineComposer"]');
-    if (inlineComposer) {
-      const btn = inlineComposer.querySelector('[role="button"]') || 
-                  inlineComposer.querySelector('div[tabindex="0"]') || 
-                  inlineComposer;
-      console.log('[AutoPost FB] ✅ Encontrado via [data-pagelet="GroupInlineComposer"]');
-      return btn;
-    }
-
-    // 2. Busca elementos no topo da página (antes do feed de postagens)
-    const candidates = Array.from(document.querySelectorAll('div[role="button"], span, div[tabindex="0"]'));
-    for (const el of candidates) {
-      // REGRA DE OURO: SE ESTIVER DENTRO DE UM POST OU COMENTÁRIO, IGNORA!
-      if (
-        el.closest('[role="article"]') || 
-        el.closest('form') || 
-        el.closest('[aria-label*="coment"]') ||
-        el.closest('[data-testid*="comment"]')
-      ) {
-        continue;
-      }
-
-      const text = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase().trim();
-
-      // Ignora qualquer menção a comentários
-      if (
-        text.includes('comentário') || 
-        text.includes('comentario') || 
-        text.includes('comment') || 
-        text.includes('responder') ||
-        text.includes('resposta')
-      ) {
-        continue;
-      }
-
-      // Deve ser o gatilho oficial de criação de nova publicação no grupo
-      if (
-        text.startsWith('escreva algo') ||
-        text.startsWith('no que você está pensando') ||
-        text.startsWith('criar publicação') ||
-        text.startsWith('crie uma publicação') ||
-        text.startsWith('write something')
-      ) {
-        const btn = el.closest('[role="button"]') || el;
-        console.log('[AutoPost FB] ✅ Encontrado gatilho autêntico do grupo:', text);
-        return btn;
-      }
-    }
-    await sleep(400);
-  }
-  return null;
-}
-
-async function findActiveEditor() {
-  for (let i = 0; i < 20; i++) {
-    const editors = document.querySelectorAll('div[role="dialog"] div[role="textbox"][contenteditable="true"], div[role="textbox"][contenteditable="true"]');
-    if (editors.length > 0) {
-      return editors[editors.length - 1];
-    }
-    await sleep(400);
-  }
-  return null;
+function isButtonEnabled(el) {
+  if (!el) return false;
+  if (el.getAttribute('aria-disabled') === 'true') return false;
+  if (el.disabled === true) return false;
+  if (el.getAttribute('disabled') !== null && el.getAttribute('disabled') !== 'false') return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return false;
+  return true;
 }
 
 async function waitForSubmitButton() {
-  console.log('[AutoPost FB] 🔍 Procurando botão Publicar...');
-  for (let i = 0; i < 20; i++) {
+  console.log('[AutoPost FB] 🔍 Procurando botão de envio (Postar / Publicar / Post)...');
+  for (let i = 0; i < 25; i++) {
     const dialog = document.querySelector('[role="dialog"]') || document;
-    const candidates = Array.from(dialog.querySelectorAll('[aria-label="Publicar"], [aria-label="Post"], [aria-label="Publicar publicação"], [role="button"]'));
+    
+    // Lista de termos aceitos para o botão de envio
+    const validTerms = ['postar', 'publicar', 'post', 'publicar publicação', 'compartilhar', 'share'];
+    const candidates = Array.from(dialog.querySelectorAll('[role="button"], button, div[tabindex="0"]'));
+
     for (const btn of candidates) {
-      const text = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase().trim();
-      if (text === 'publicar' || text === 'post' || text.includes('publicar')) {
-        const ariaDisabled = btn.getAttribute('aria-disabled');
-        if (ariaDisabled !== 'true') {
+      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
+      const rawText = (btn.innerText || '').toLowerCase().trim();
+
+      // Exclusões estritas: NÃO clicar em controles secundários
+      if (
+        ariaLabel.includes('fechar') || 
+        ariaLabel.includes('close') ||
+        rawText.includes('anonimamente') || 
+        ariaLabel.includes('anonimamente') ||
+        rawText.includes('adicionar ao') ||
+        ariaLabel.includes('adicionar ao') ||
+        rawText.includes('foto/vídeo') ||
+        ariaLabel.includes('foto/vídeo') ||
+        rawText.includes('marcar') ||
+        ariaLabel.includes('marcar') ||
+        rawText.includes('sentimento') ||
+        ariaLabel.includes('sentimento')
+      ) {
+        continue;
+      }
+
+      // Checa se o texto ou o aria-label coincide com os termos de envio do Facebook
+      const isExactMatch = validTerms.includes(rawText) || validTerms.includes(ariaLabel);
+      const isStartMatch = (rawText === 'postar' || rawText === 'publicar' || rawText === 'post' ||
+                            ariaLabel === 'postar' || ariaLabel === 'publicar' || ariaLabel === 'post');
+
+      if (isExactMatch || isStartMatch) {
+        if (isButtonEnabled(btn)) {
+          console.log('[AutoPost FB] ✅ Botão de envio confirmado e ativo:', rawText || ariaLabel);
           return btn;
         }
       }
     }
-    await sleep(500);
+
+    // Fallback: busca pelo último botão clicável do diálogo
+    for (let j = candidates.length - 1; j >= 0; j--) {
+      const btn = candidates[j];
+      const t = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase().trim();
+      if ((t === 'postar' || t === 'publicar' || t === 'post') && !t.includes('anonim') && !t.includes('adicion')) {
+        if (isButtonEnabled(btn)) {
+          console.log('[AutoPost FB] ✅ Botão primário selecionado pelo fallback:', t);
+          return btn;
+        }
+      }
+    }
+
+    await sleep(400);
   }
   return null;
 }

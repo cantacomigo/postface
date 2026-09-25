@@ -78,13 +78,13 @@ async function executeSingleSafePost({ text }) {
 
   await sleep(1200);
 
-  // E. Clique único no botão Publicar
-  const submitBtn = document.querySelector('div[aria-label="Publicar"], div[aria-label="Post"]');
-  if (submitBtn && submitBtn.getAttribute('aria-disabled') !== 'true') {
-    submitBtn.click();
+  // E. Detecção multilíngue e clique único no botão oficial (Postar / Publicar / Post)
+  const submitBtn = await waitForSubmitButton();
+  if (submitBtn) {
+    simulateHumanClick(submitBtn);
     return { success: true };
   }
-  throw new Error('Botão Publicar indisponível');
+  throw new Error('Botão Postar/Publicar indisponível');
 }`;
 
   const faultyCode = `// CÓDIGO ANTIGO (COM O BUG QUE REPETIA O POST 3 VEZES):
