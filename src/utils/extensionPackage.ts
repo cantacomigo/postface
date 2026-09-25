@@ -7,7 +7,7 @@ export interface ExtensionFile {
   content: string;
 }
 
-export const EXTENSION_VERSION = '3.3.2';
+export const EXTENSION_VERSION = '3.3.3';
 
 export function getExtensionFiles(): ExtensionFile[] {
   const manifest = `{
@@ -368,13 +368,17 @@ async function handleSinglePostExecution(data) {
     console.log('[AutoPost FB] 🖱️ Clicando na caixa de criação...');
     simulateHumanClick(trigger);
 
-    // 2. Aguarda o modal do Facebook abrir
-    await sleep(2500);
+    // 2. Aguarda OBRIGATORIAMENTE a abertura do modal oficial do grupo
+    const dialog = await waitForModalDialog();
+    if (!dialog) {
+      throw new Error('Modal de publicação do Facebook não abriu após clicar no botão.');
+    }
 
-    const dialog = document.querySelector('[role="dialog"]') || document;
+    console.log('[AutoPost FB] ✅ Modal oficial "Criar post" aberto!');
+    await sleep(1500);
 
-    // 3. Localiza a caixa de texto real (Lexical / contenteditable)
-    const editor = await findActiveEditor();
+    // 3. Localiza a caixa de texto real EXCLUSIVAMENTE DENTRO DO MODAL
+    const editor = dialog.querySelector('div[role="textbox"][contenteditable="true"], div[contenteditable="true"]') || await findActiveEditor();
     if (!editor) {
       throw new Error('Editor de texto do Facebook não abriu dentro do modal.');
     }
@@ -397,18 +401,18 @@ async function handleSinglePostExecution(data) {
     document.execCommand('insertText', false, text);
     await sleep(1500);
 
-    // 4. Se houver imagem associada ao template, anexa automaticamente
+    // 4. Se houver imagem associada ao template, anexa EXCLUSIVAMENTE DENTRO DO MODAL
     const imagePayload = mediaDataUrl || (mediaUrls && mediaUrls[0]);
     if (imagePayload) {
-      console.log('[AutoPost FB] 🖼️ Anexando imagem ao post automaticamente...');
+      console.log('[AutoPost FB] 🖼️ Anexando imagem ao post dentro do modal (sem tocar comentários)...');
       await attachImageToFacebook(imagePayload, dialog, editor);
-      await sleep(3000); // Aguarda upload e preview da imagem no Facebook
+      await sleep(3500); // Aguarda upload e preview da imagem no Facebook
     }
 
     await sleep(1000);
 
-    // 5. Encontra botão Postar / Publicar habilitado
-    const submitBtn = await waitForSubmitButton();
+    // 5. Encontra botão Postar / Publicar habilitado DENTRO DO MODAL
+    const submitBtn = await waitForSubmitButtonInDialog(dialog);
     if (submitBtn) {
       console.log('[AutoPost FB] 🚀 Clicando no botão Postar/Publicar...');
       simulateHumanClick(submitBtn);
@@ -428,8 +432,8 @@ async function handleSinglePostExecution(data) {
     }
 
     // Aguarda e verifica se o diálogo fechou; se persistir, re-aplica o clique de envio
-    await sleep(3000);
-    const stillOpenDialog = document.querySelector('[role="dialog"]');
+    await sleep(3500);
+    const stillOpenDialog = document.querySelector('div[role="dialog"]');
     if (stillOpenDialog) {
       const retryBtn = findSubmitButtonQuick(stillOpenDialog);
       if (retryBtn) {
@@ -452,6 +456,20 @@ async function handleSinglePostExecution(data) {
   }
 }
 
+async function waitForModalDialog() {
+  console.log('[AutoPost FB] ⏳ Aguardando abertura do modal "Criar post"...');
+  for (let i = 0; i < 25; i++) {
+    const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+    for (const d of dialogs) {
+      if (d.querySelector('div[role="textbox"]') || d.querySelector('[contenteditable="true"]')) {
+        return d;
+      }
+    }
+    await sleep(400);
+  }
+  return null;
+}
+
 function dataUrlToFile(dataUrl, filename = 'foto_publicacao.jpg') {
   try {
     const parts = dataUrl.split(',');
@@ -472,7 +490,7 @@ function dataUrlToFile(dataUrl, filename = 'foto_publicacao.jpg') {
 
 async function attachImageToFacebook(mediaDataUrl, dialog, editor) {
   try {
-    if (!mediaDataUrl) return false;
+    if (!dialog || !mediaDataUrl) return false;
     
     // Se for URL externa em vez de dataUrl, tenta converter
     let file = null;
@@ -491,38 +509,44 @@ async function attachImageToFacebook(mediaDataUrl, dialog, editor) {
     const dt = new DataTransfer();
     dt.items.add(file);
 
-    // Passo 1: Localiza e clica no botão "Foto/vídeo" na barra "Adicionar ao post"
-    console.log('[AutoPost FB] 🔍 Procurando botão Foto/vídeo para ativar o seletor...');
-    const photoButtons = Array.from(dialog.querySelectorAll('[aria-label*="Foto"], [aria-label*="foto"], [aria-label*="Photo"], [aria-label*="photo"], div[role="button"]'));
-    let photoBtn = null;
-    for (const b of photoButtons) {
-      const lbl = (b.getAttribute('aria-label') || b.innerText || '').toLowerCase();
-      if ((lbl.includes('foto') || lbl.includes('photo')) && !lbl.includes('perfil') && !lbl.includes('capa')) {
-        photoBtn = b.closest('[role="button"]') || b;
-        break;
+    // Passo 1: Localiza o input[type="file"] EXCLUSIVAMENTE DENTRO DO MODAL
+    let fileInput = dialog.querySelector('input[type="file"]');
+
+    if (!fileInput) {
+      console.log('[AutoPost FB] 🔍 Procurando botão Foto/vídeo dentro do modal...');
+      // Busca específica de botões de foto DENTRO do modal (NUNCA fora, NUNCA em comentários)
+      const photoButtons = Array.from(dialog.querySelectorAll('[aria-label*="Foto"], [aria-label*="foto"], [aria-label*="Photo"], [aria-label*="photo"]'));
+      let photoBtn = null;
+      for (const b of photoButtons) {
+        const lbl = (b.getAttribute('aria-label') || b.innerText || '').toLowerCase();
+        if ((lbl.includes('foto') || lbl.includes('photo')) && !lbl.includes('coment') && !lbl.includes('fechar') && !lbl.includes('postar')) {
+          photoBtn = b.closest('[role="button"]') || b;
+          break;
+        }
       }
+
+      if (photoBtn) {
+        console.log('[AutoPost FB] 🖱️ Clicando em Foto/vídeo dentro do modal...');
+        simulateHumanClick(photoBtn);
+        await sleep(2000);
+      }
+
+      // Procura novamente o input file gerado DENTRO DO MODAL
+      fileInput = dialog.querySelector('input[type="file"]');
     }
 
-    if (photoBtn) {
-      console.log('[AutoPost FB] 🖱️ Clicando em Foto/vídeo...');
-      simulateHumanClick(photoBtn);
-      await sleep(1500);
-    }
-
-    // Passo 2: Localiza o input[type="file"] do Facebook
-    let fileInput = dialog.querySelector('input[type="file"]') || document.querySelector('input[type="file"]');
     if (fileInput) {
-      console.log('[AutoPost FB] 📥 Injetando arquivo de imagem no input[type="file"]...');
+      console.log('[AutoPost FB] 📥 Injetando arquivo de imagem no seletor do modal...');
       fileInput.files = dt.files;
       fileInput.dispatchEvent(new Event('change', { bubbles: true }));
       fileInput.dispatchEvent(new Event('input', { bubbles: true }));
-      await sleep(3500);
-      console.log('[AutoPost FB] ✅ Imagem carregada no Facebook!');
+      await sleep(4000);
+      console.log('[AutoPost FB] ✅ Imagem carregada no modal com sucesso!');
       return true;
     }
 
-    // Passo 3: Se não encontrou o input file, dispara ClipboardEvent paste diretamente no editor
-    console.log('[AutoPost FB] 📋 Colando imagem via área de transferência no editor Lexical...');
+    // Passo 2: Se não gerou input file, cola direto no editor do modal via ClipboardEvent
+    console.log('[AutoPost FB] 📋 Colando imagem via clipboard no editor do modal...');
     editor.focus();
     const pasteEvent = new ClipboardEvent('paste', {
       bubbles: true,
@@ -530,12 +554,66 @@ async function attachImageToFacebook(mediaDataUrl, dialog, editor) {
       clipboardData: dt
     });
     editor.dispatchEvent(pasteEvent);
-    await sleep(3000);
+    await sleep(3500);
     return true;
   } catch (err) {
     console.warn('[AutoPost FB] Erro ao anexar imagem:', err);
     return false;
   }
+}
+
+async function waitForSubmitButtonInDialog(dialog) {
+  if (!dialog) return null;
+  console.log('[AutoPost FB] 🔍 Procurando botão de envio dentro do modal...');
+  for (let i = 0; i < 25; i++) {
+    // 1. Busca por seletores diretos de aria-label dentro do dialog
+    const directAria = Array.from(dialog.querySelectorAll(
+      '[aria-label="Postar"], [aria-label="Publicar"], [aria-label="Post"], [aria-label="Publicar publicação"], [aria-label="Publicar post"], [aria-label="Share"]'
+    ));
+    for (const el of directAria) {
+      if (isButtonEnabled(el)) {
+        return el;
+      }
+    }
+
+    // 2. Busca por nó de texto folha ("Postar" / "Publicar" / "Post") dentro do dialog
+    const allTextLeaves = Array.from(dialog.querySelectorAll('span, div, b, strong'));
+    for (const leaf of allTextLeaves) {
+      if (leaf.children.length === 0) {
+        const txt = leaf.textContent ? leaf.textContent.trim().toLowerCase() : '';
+        if (txt === 'postar' || txt === 'publicar' || txt === 'post') {
+          const clickable = leaf.closest('[role="button"]') || leaf.closest('button') || leaf.parentElement || leaf;
+          if (isButtonEnabled(clickable)) {
+            return clickable;
+          }
+        }
+      }
+    }
+
+    // 3. Fallback dentro do dialog
+    const candidates = Array.from(dialog.querySelectorAll('[role="button"], button, div[tabindex="0"]'));
+    for (let j = candidates.length - 1; j >= 0; j--) {
+      const btn = candidates[j];
+      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
+      const rawText = (btn.innerText || '').toLowerCase().trim();
+      if (
+        ariaLabel.includes('fechar') || 
+        rawText.includes('anonimamente') || 
+        rawText.includes('adicionar ao')
+      ) {
+        continue;
+      }
+      if (rawText === 'postar' || rawText === 'publicar' || rawText === 'post' ||
+          ariaLabel === 'postar' || ariaLabel === 'publicar' || ariaLabel === 'post') {
+        if (isButtonEnabled(btn)) {
+          return btn;
+        }
+      }
+    }
+
+    await sleep(400);
+  }
+  return null;
 }
 
 function simulateHumanClick(element) {
