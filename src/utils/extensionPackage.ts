@@ -179,15 +179,37 @@ async function runCampaignWorkflow(campaign) {
         step: \`[2/4] Injetando publicação e digitando texto...\`
       });
 
-      // 2. Dispara injeção real no Facebook
-      const postResult = await chrome.tabs.sendMessage(fbTab.id, {
+      // 2. Dispara injeção real no Facebook com listener dedicado de resposta
+      const postPromise = new Promise((resolve) => {
+        const resultListener = (msg) => {
+          if (msg.action === 'POST_RESULT' && msg.payload && msg.payload.groupId === group.id) {
+            chrome.runtime.onMessage.removeListener(resultListener);
+            resolve(msg.payload);
+          }
+        };
+        chrome.runtime.onMessage.addListener(resultListener);
+
+        // Timeout de segurança de 35s
+        setTimeout(() => {
+          chrome.runtime.onMessage.removeListener(resultListener);
+          resolve({ success: false, error: 'Tempo limite esgotado aguardando confirmação do Facebook.' });
+        }, 35000);
+      });
+
+      // Envia comando para a aba do Facebook
+      await chrome.tabs.sendMessage(fbTab.id, {
         action: 'EXECUTE_POST',
         payload: {
+          groupId: group.id,
           groupName: group.name,
           text: template.text,
           postToken: 'POST_' + Date.now() + '_' + Math.random().toString(36).substring(7)
         }
+      }).catch((err) => {
+        console.warn('[AutoPost FB] Aviso no envio inicial:', err);
       });
+
+      const postResult = await postPromise;
 
       if (postResult && postResult.success) {
         notifyDashboard('CAMPAIGN_POST_SUCCESS', {
@@ -243,10 +265,35 @@ if (window.top === window.self) {
 
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === 'EXECUTE_POST') {
+        // Responde imediatamente com confirmação de recebimento para evitar fechamento do canal
+        sendResponse({ received: true });
+
+        // Executa a postagem assincronamente e notifica o background via POST_RESULT
         handleSinglePostExecution(request.payload)
-          .then(result => sendResponse(result))
-          .catch(err => sendResponse({ success: false, error: err.message }));
-        return true;
+          .then((res) => {
+            chrome.runtime.sendMessage({
+              action: 'POST_RESULT',
+              payload: {
+                groupId: request.payload.groupId,
+                groupName: request.payload.groupName,
+                success: true,
+                timestamp: res?.timestamp || new Date().toISOString()
+              }
+            });
+          })
+          .catch((err) => {
+            chrome.runtime.sendMessage({
+              action: 'POST_RESULT',
+              payload: {
+                groupId: request.payload.groupId,
+                groupName: request.payload.groupName,
+                success: false,
+                error: err.message
+              }
+            });
+          });
+
+        return false;
       }
 
       if (request.action === 'EXTRACT_FACEBOOK_GROUPS') {
@@ -291,33 +338,28 @@ async function handleSinglePostExecution(data) {
       throw new Error('Editor de texto do Facebook não abriu dentro do modal.');
     }
 
-    console.log('[AutoPost FB] ✍️ Injetando texto no editor...');
+    console.log('[AutoPost FB] ✍️ Injetando texto no editor (exatamente 1 única vez)...');
     editor.focus();
     await sleep(400);
 
-    // Limpa conteúdo residual
-    document.execCommand('selectAll', false, null);
+    // Limpa conteúdo residual do editor selecionando todo o conteúdo
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    sel.removeAllRanges();
+    sel.addRange(range);
     document.execCommand('delete', false, null);
     await sleep(300);
 
-    // Inserção atômica única com eventos React do Facebook
+    // INSERÇÃO ATÔMICA ÚNICA:
+    // O comando 'insertText' já dispara todos os eventos nativos do navegador que o Facebook escuta.
+    // NUNCA disparar InputEvent sintético manual nem reexecutar comandos extras, pois o Facebook
+    // insere o texto para CADA evento recebido!
     document.execCommand('insertText', false, text);
-    editor.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
-    editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
 
-    await sleep(1500);
+    await sleep(2000);
 
-    // 4. Verificação defensiva anti-triplicação
-    if (editor.innerText.trim().length > text.trim().length * 1.8) {
-      console.warn('[AutoPost FB] Detectada duplicação pelo Lexical! Restaurando para 1x...');
-      document.execCommand('selectAll', false, null);
-      document.execCommand('delete', false, null);
-      document.execCommand('insertText', false, text.trim());
-    }
-
-    await sleep(1500);
-
-    // 5. Encontra botão Publicar habilitado
+    // 4. Encontra botão Publicar habilitado
     const submitBtn = await waitForSubmitButton();
     if (!submitBtn) {
       throw new Error('Botão Publicar não ficou habilitado após digitar o texto.');
@@ -358,30 +400,58 @@ function simulateHumanClick(element) {
 }
 
 async function findComposerTrigger() {
-  console.log('[AutoPost FB] 🔍 Procurando caixa de postagem...');
-  for (let i = 0; i < 25; i++) {
-    // 1. Procura por data-pagelet="GroupInlineComposer"
+  console.log('[AutoPost FB] 🔍 Procurando caixa oficial de postagem do grupo (ignorando comentários)...');
+  for (let i = 0; i < 30; i++) {
+    // 1. Procura primeiro no GroupInlineComposer oficial
     const inlineComposer = document.querySelector('[data-pagelet="GroupInlineComposer"]');
     if (inlineComposer) {
-      const btn = inlineComposer.querySelector('[role="button"]') || inlineComposer;
+      const btn = inlineComposer.querySelector('[role="button"]') || 
+                  inlineComposer.querySelector('div[tabindex="0"]') || 
+                  inlineComposer;
+      console.log('[AutoPost FB] ✅ Encontrado via [data-pagelet="GroupInlineComposer"]');
       return btn;
     }
 
-    // 2. Busca por textos característicos na página
-    const elements = Array.from(document.querySelectorAll('div[role="button"], span, div'));
-    for (const el of elements) {
-      const text = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase().trim();
+    // 2. Busca elementos no topo da página (antes do feed de postagens)
+    const candidates = Array.from(document.querySelectorAll('div[role="button"], span, div[tabindex="0"]'));
+    for (const el of candidates) {
+      // REGRA DE OURO: SE ESTIVER DENTRO DE UM POST OU COMENTÁRIO, IGNORA!
       if (
-        text.includes('escreva algo') ||
-        text.includes('no que você está pensando') ||
-        text.includes('criar publicação') ||
-        text.includes('crie uma publicação') ||
-        text.includes('write something')
+        el.closest('[role="article"]') || 
+        el.closest('form') || 
+        el.closest('[aria-label*="coment"]') ||
+        el.closest('[data-testid*="comment"]')
       ) {
-        return el.closest('[role="button"]') || el;
+        continue;
+      }
+
+      const text = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase().trim();
+
+      // Ignora qualquer menção a comentários
+      if (
+        text.includes('comentário') || 
+        text.includes('comentario') || 
+        text.includes('comment') || 
+        text.includes('responder') ||
+        text.includes('resposta')
+      ) {
+        continue;
+      }
+
+      // Deve ser o gatilho oficial de criação de nova publicação no grupo
+      if (
+        text.startsWith('escreva algo') ||
+        text.startsWith('no que você está pensando') ||
+        text.startsWith('criar publicação') ||
+        text.startsWith('crie uma publicação') ||
+        text.startsWith('write something')
+      ) {
+        const btn = el.closest('[role="button"]') || el;
+        console.log('[AutoPost FB] ✅ Encontrado gatilho autêntico do grupo:', text);
+        return btn;
       }
     }
-    await sleep(500);
+    await sleep(400);
   }
   return null;
 }
