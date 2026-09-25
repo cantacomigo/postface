@@ -1,79 +1,78 @@
-export interface PostTemplate {
-  id: string;
-  title: string;
-  content: string; // Supports Spintax: {Olá|Oi|Bom dia} {amigos|pessoal}, veja isso...
-  mediaType: 'none' | 'images' | 'video';
-  images: string[]; // up to 10 image URLs/base64
-  videoUrl?: string;
-  focusType: 'image_title' | 'standard' | 'text_only';
-  tags: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface GroupCategory {
-  id: string;
-  name: string;
-  color: string;
-  description: string;
-}
-
 export interface FacebookGroup {
   id: string;
-  fbId: string;
   name: string;
   url: string;
-  categoryId: string;
-  privacy: 'public' | 'private';
+  category: string;
   membersCount: number;
-  status: 'active' | 'paused' | 'review_required';
+  status: 'idle' | 'ready' | 'posting' | 'success' | 'failed' | 'cooldown';
   lastPostedAt?: string;
+  postCount: number;
+  tags: string[];
   notes?: string;
 }
 
-export interface AntiBanRules {
-  minDelaySeconds: number; // e.g. 120
-  maxDelaySeconds: number; // e.g. 300
-  blockBatchSize: number; // e.g. 5 posts
-  blockPauseMinSeconds: number; // e.g. 500
-  blockPauseMaxSeconds: number; // e.g. 900
-  humanTypingSimulation: boolean; // Random keystroke delays (40-120ms)
-  spintaxEnabled: boolean; // Dynamic variations per post
-  maxDailyPosts: number; // e.g. 25
-  stopOnCheckpoint: boolean; // Instantly abort if Facebook shows Captcha/Checkpoint
-  randomizeGroupOrder: boolean;
-  simulationSpeedMultiplier: number; // 1 for real 1:1, or higher for demo/testing
+export interface PostTemplate {
+  id: string;
+  name: string;
+  category: string;
+  bodyWithSpintax: string;
+  mediaUrls: string[];
+  tags: string[];
+  createdAt: string;
+  usageCount: number;
 }
 
-export interface CampaignLog {
+export interface AntiBanConfig {
+  minDelaySeconds: number;
+  maxDelaySeconds: number;
+  postsPerHourLimit: number;
+  postsPerDayLimit: number;
+  humanTypingSpeed: boolean;
+  typingDelayMs: number;
+  randomizeOrder: boolean;
+  pauseAfterConsecutive: number;
+  pauseDurationMinutes: number;
+  duplicateProtection: boolean; // Previne injeção duplicada / triplicada
+  detectWarnings: boolean;
+  zeroWidthRandomizer: boolean; // Adiciona caracteres invisíveis anti-hash
+}
+
+export type CampaignStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error';
+
+export interface CampaignProgress {
+  status: CampaignStatus;
+  currentGroupIndex: number;
+  totalGroups: number;
+  successCount: number;
+  failureCount: number;
+  currentGroupId: string | null;
+  countdown: number;
+  currentStep: string;
+  selectedTemplateId: string;
+  selectedGroupIds: string[];
+  startedAt?: string;
+  estimatedRemainingSeconds?: number;
+}
+
+export interface ExecutionLog {
   id: string;
   timestamp: string;
   groupId: string;
   groupName: string;
   templateId: string;
-  templateTitle: string;
-  status: 'success' | 'failed' | 'paused_batch' | 'checkpoint_alert' | 'skipped';
+  templateName: string;
+  status: 'success' | 'warning' | 'error' | 'info';
+  message: string;
+  renderedContent: string;
   postUrl?: string;
-  details: string;
-  resolvedText: string;
-  delayWaitedSeconds: number;
+  durationSeconds: number;
 }
 
-export interface ActiveCampaign {
-  id: string;
-  name: string;
-  templateId: string;
-  categoryIds: string[];
-  selectedGroupIds: string[];
-  status: 'idle' | 'running' | 'paused' | 'completed' | 'aborted';
-  antiBanRules: AntiBanRules;
-  currentIndex: number;
-  totalGroups: number;
-  successCount: number;
-  failedCount: number;
-  postsInCurrentBatch: number;
-  nextPostCountdown: number; // seconds remaining
-  currentPhaseText: string; // "Aguardando delay seguro...", "Em pausa de lote...", "Publicando..."
-  startedAt?: string;
-  completedAt?: string;
+export interface ExtensionDiagnostic {
+  isInstalled: boolean;
+  version: string;
+  hasFbPermission: boolean;
+  activeSessionDetected: boolean;
+  lastPing: string;
+  fixApplied: boolean; // Flag confirmando a correção da triplicação de postagem
 }

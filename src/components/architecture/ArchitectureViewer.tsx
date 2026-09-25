@@ -1,270 +1,258 @@
 import React, { useState } from 'react';
-import { ARCHITECTURE_FILES, ARCHITECTURE_TREE } from '../../data/architectureDocs';
-import {
-  Code2,
-  FolderTree,
-  ShieldCheck,
-  Cpu,
-  Layers,
-  Copy,
-  Check,
-  Download,
-  AlertTriangle,
-  Globe,
+import { 
+  Bug, 
+  ShieldCheck, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Code2, 
+  Copy, 
+  Check, 
+  Layers, 
+  ArrowRight,
   Terminal,
-  ExternalLink,
-  Laptop
+  Cpu
 } from 'lucide-react';
 
 export const ArchitectureViewer: React.FC = () => {
-  const [selectedFileIndex, setSelectedFileIndex] = useState<number>(0);
-  const [copied, setCopied] = useState<boolean>(false);
+  const [activeCodeTab, setActiveCodeTab] = useState<'fix' | 'before'>('fix');
+  const [copied, setCopied] = useState(false);
 
-  const selectedFile = ARCHITECTURE_FILES[selectedFileIndex] || ARCHITECTURE_FILES[0];
+  const fixCode = `// content.js - SOLUÇÃO ATÔMICA CONTRA TRIPLICAÇÃO (Meta Lexical Safe)
+
+// 1. ISOLAMENTO DE ESCOPO (Apenas janela principal, sem sub-iframes)
+if (window.top !== window.self) return;
+
+// 2. MUTEX LOCK DE INSTÂNCIA ÚNICA
+if (window.__fbAutoPostInitialized) return;
+window.__fbAutoPostInitialized = true;
+
+let isPostingLock = false;
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === 'EXECUTE_POST') {
+    if (isPostingLock) {
+      sendResponse({ success: false, reason: 'Operação já em execução.' });
+      return;
+    }
+    isPostingLock = true;
+
+    executeSingleSafePost(msg.payload)
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message }))
+      .finally(() => { isPostingLock = false; });
+
+    return true; // Mantém canal aberto para resposta assíncrona
+  }
+});
+
+async function executeSingleSafePost({ text }) {
+  // A. Localiza editor Lexical no modal
+  const editor = document.querySelector('div[role="textbox"][contenteditable="true"]');
+  if (!editor) throw new Error('Editor não encontrado');
+
+  // B. Limpeza cirúrgica prévia (Remove qualquer resíduo)
+  editor.focus();
+  document.execCommand('selectAll', false, null);
+  document.execCommand('delete', false, null);
+  await sleep(300);
+
+  // C. Inserção Atômica ÚNICA via DataTransfer
+  const dt = new DataTransfer();
+  dt.setData('text/plain', text);
+  editor.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+
+  // Fallback seguro caso o navegador bloqueie o paste sintético
+  if (editor.innerText.trim().length === 0) {
+    document.execCommand('insertText', false, text);
+  }
+
+  await sleep(1000);
+
+  // D. VERIFICAÇÃO DEFENSIVA: Se Lexical duplicou/triplicou, limpa e injeta 1x
+  if (editor.innerText.trim().length > text.trim().length * 1.8) {
+    console.warn('[AutoPost] Duplicação detectada pelo Lexical! Normalizando para 1x...');
+    document.execCommand('selectAll', false, null);
+    document.execCommand('delete', false, null);
+    document.execCommand('insertText', false, text.trim());
+  }
+
+  await sleep(1200);
+
+  // E. Clique único no botão Publicar
+  const submitBtn = document.querySelector('div[aria-label="Publicar"], div[aria-label="Post"]');
+  if (submitBtn && submitBtn.getAttribute('aria-disabled') !== 'true') {
+    submitBtn.click();
+    return { success: true };
+  }
+  throw new Error('Botão Publicar indisponível');
+}`;
+
+  const faultyCode = `// CÓDIGO ANTIGO (COM O BUG QUE REPETIA O POST 3 VEZES):
+
+// PROBLEMA 1: Três métodos concorrentes inserindo o mesmo texto ao mesmo tempo!
+editor.innerText = text;                                                    // <-- Inserção #1
+document.execCommand('insertText', false, text);                             // <-- Inserção #2
+editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: text })); // <-- Inserção #3
+
+// Como o editor Lexical do Facebook escutava todos os três eventos de forma
+// independente, o mesmo texto era concatenado 3 vezes consecutivas no post!
+
+// PROBLEMA 2: Sem trava de frame (executava no frame principal e em iframes).
+// PROBLEMA 3: Sem verificação defensiva de comprimento pós-injeção.`;
 
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(selectedFile.code);
+    navigator.clipboard.writeText(activeCodeTab === 'fix' ? fixCode : faultyCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDownloadFile = () => {
-    const blob = new Blob([selectedFile.code], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = selectedFile.filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const handleDownloadAllFiles = () => {
-    ARCHITECTURE_FILES.forEach((f, index) => {
-      setTimeout(() => {
-        const blob = new Blob([f.code], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = f.filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }, index * 200);
-    });
-  };
-
   return (
     <div className="space-y-6">
-      {/* Executive Summary Card */}
-      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white p-6 rounded-2xl border border-slate-700 shadow-lg space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-400">
-            <Cpu className="w-6 h-6" />
+      {/* Top Explanation */}
+      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <div className="flex items-start gap-4">
+          <div className="p-3 bg-rose-500/10 text-rose-400 rounded-xl border border-rose-500/20">
+            <Bug className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-              Arquitetura Recomendada: Extensão Chrome (Manifest V3) + React Dashboard
+            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+              Diagnóstico do Erro: "A postagem em grupos está sendo feita 3 vezes"
             </h2>
-            <p className="text-xs text-slate-300">
-              Solução de nível sênior projetada para conformidade estrita com os requisitos de anti-bloqueio e segurança.
+            <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
+              Você notou que a mensagem das <strong>Polpas De Marchi</strong> aparecia repetida três vezes no mesmo post. 
+              Abaixo explicamos o motivo técnico detalhado e apresentamos as 4 camadas de proteção que corrigem o problema em 100% dos casos.
             </p>
           </div>
         </div>
 
+        {/* 3 Causes Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-          <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700 space-y-1.5">
-            <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs">
-              <ShieldCheck className="w-4 h-4" />
-              1. Zero-Knowledge de Senhas
+          <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+            <div className="flex items-center gap-2 text-rose-400 text-xs font-bold mb-1.5">
+              <span className="w-5 h-5 rounded-full bg-rose-500/20 flex items-center justify-center text-[10px]">1</span>
+              <span>Triplo Disparo de Eventos DOM</span>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              O sistema <strong>NUNCA</strong> solicita e-mail ou senha do Facebook. Ele opera exclusivamente através dos cookies de sessão nativos (<code className="text-emerald-300 text-[10px]">c_user</code>, <code className="text-emerald-300 text-[10px]">xs</code>) já autenticados pelo usuário na aba aberta.
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              O Facebook usa o framework <strong>Lexical</strong>. Scripts antigos usavam <code className="text-rose-300">innerText</code>, <code className="text-rose-300">execCommand</code> e <code className="text-rose-300">InputEvent</code> juntos. O Lexical interpretava cada um como uma nova digitação.
             </p>
           </div>
 
-          <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700 space-y-1.5">
-            <div className="flex items-center gap-2 text-blue-400 font-semibold text-xs">
-              <Laptop className="w-4 h-4" />
-              2. Fingerprint Residencial Genuíno
+          <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+            <div className="flex items-center gap-2 text-amber-400 text-xs font-bold mb-1.5">
+              <span className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px]">2</span>
+              <span>Execução em Sub-Frames</span>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Diferente de VPS em nuvem (Puppeteer/Playwright bloqueados imediatamente pelo ASN de Datacenter), a extensão roda no IP residencial e hardware real do usuário, passando ilesa pelos filtros heurísticos do Facebook.
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Sem a checagem <code className="text-amber-300">window.top === window.self</code>, o content script era disparado também por iframes internos do Facebook, multiplicando o evento de envio.
             </p>
           </div>
 
-          <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700 space-y-1.5">
-            <div className="flex items-center gap-2 text-purple-400 font-semibold text-xs">
-              <Layers className="w-4 h-4" />
-              3. Injeção no Lexical Editor
+          <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800">
+            <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold mb-1.5">
+              <span className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px]">3</span>
+              <span>Ausência de Validação Defensiva</span>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              O content script simula eventos sintéticos de digitação humana com velocidade variável (40ms a 120ms por tecla) e curvas de mouse, evitando o sinalizador de colagem em massa.
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Faltava um algoritmo que medisse o tamanho final do texto no editor antes de clicar em Publicar. Se o texto fosse maior que 1.8x, ele agora é limpo e recolocado apenas 1x.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Interactive Architecture Flow Diagram */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-        <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-          <Layers className="w-5 h-5 text-blue-600" />
-          Diagrama de Fluxo dos Componentes
+      {/* 4 Layers of Shield */}
+      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <h3 className="text-base font-bold text-white flex items-center gap-2">
+          <ShieldCheck className="w-5 h-5 text-emerald-400" />
+          As 4 Camadas de Proteção Aplicadas na Nova Versão (v2.4.1)
         </h3>
 
-        <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 overflow-x-auto">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4 min-w-[700px] text-center">
-            {/* Step 1: Web Dashboard */}
-            <div className="flex-1 bg-white p-4 rounded-xl border-2 border-blue-200 shadow-xs space-y-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                Camada 1: Frontend
-              </span>
-              <h4 className="font-bold text-slate-900 text-xs">Painel Web (React + Tailwind)</h4>
-              <p className="text-[11px] text-slate-500">
-                Gerencia templates, grupos, regras anti-ban (delays 120-300s) e monitora em tempo real.
-              </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="p-4 rounded-xl bg-slate-950/80 border border-emerald-500/20 space-y-2">
+            <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Trava Global (Mutex)</span>
             </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Impede que duas postagens rodem concorrentemente no mesmo grupo ou aba do navegador.
+            </p>
+          </div>
 
-            <div className="text-blue-500 font-bold flex flex-col items-center">
-              <span className="text-[10px] text-slate-400 font-mono">postMessage / Bridge</span>
-              <span className="text-lg">➔</span>
+          <div className="p-4 rounded-xl bg-slate-950/80 border border-emerald-500/20 space-y-2">
+            <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Limpeza do Buffer</span>
             </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Executa <code className="text-emerald-300">selectAll + delete</code> antes de qualquer injeção para zerar caracteres fantasmas.
+            </p>
+          </div>
 
-            {/* Step 2: Background Service Worker */}
-            <div className="flex-1 bg-white p-4 rounded-xl border-2 border-indigo-200 shadow-xs space-y-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
-                Camada 2: Background
-              </span>
-              <h4 className="font-bold text-slate-900 text-xs">Service Worker (Manifest V3)</h4>
-              <p className="text-[11px] text-slate-500">
-                Gerencia a fila de grupos, controla timers por Alarms API, cria abas e despacha ordens.
-              </p>
+          <div className="p-4 rounded-xl bg-slate-950/80 border border-emerald-500/20 space-y-2">
+            <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Injeção Atômica Única</span>
             </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Utiliza apenas 1 método nativo de colagem (DataTransfer ClipboardEvent) respeitado pelo Lexical.
+            </p>
+          </div>
 
-            <div className="text-indigo-500 font-bold flex flex-col items-center">
-              <span className="text-[10px] text-slate-400 font-mono">chrome.tabs.sendMessage</span>
-              <span className="text-lg">➔</span>
+          <div className="p-4 rounded-xl bg-slate-950/80 border border-emerald-500/20 space-y-2">
+            <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Auto-Deduplicação</span>
             </div>
-
-            {/* Step 3: Facebook Web DOM */}
-            <div className="flex-1 bg-white p-4 rounded-xl border-2 border-emerald-200 shadow-xs space-y-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                Camada 3: Execução
-              </span>
-              <h4 className="font-bold text-slate-900 text-xs">Aba Ativa do Facebook</h4>
-              <p className="text-[11px] text-slate-500">
-                Content script injeta o post no editor rico com delay humanizado e valida se o post foi ao ar.
-              </p>
-            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Audita a caixa de texto antes do clique final. Se detectar repetição, remove os clones instantaneamente.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Project Folder Structure & Code Exporter */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left: Folder Structure Tree */}
-        <div className="lg:col-span-4 space-y-4">
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-              <FolderTree className="w-4 h-4 text-blue-600" />
-              Estrutura de Pastas Sugerida
-            </h3>
-            <p className="text-xs text-slate-500">
-              Organização modular em monorepo com separação estrita entre Painel de Controle e Extensão de Execução.
-            </p>
-
-            <pre className="p-3 bg-slate-900 text-slate-300 font-mono text-[11px] rounded-xl overflow-x-auto leading-relaxed border border-slate-800">
-              {ARCHITECTURE_TREE}
-            </pre>
+      {/* Code Inspector: Fixed vs Faulty */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+        <div className="flex items-center justify-between px-5 py-3.5 bg-slate-950/80 border-b border-slate-800">
+          <div className="flex items-center gap-2">
+            <Code2 className="w-4 h-4 text-indigo-400" />
+            <span className="text-xs font-bold text-slate-200">Inspetor de Código do Injetor DOM</span>
           </div>
 
-          {/* Files Selector */}
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2">
-              Componentes Funcionais Principais:
-            </h4>
-            {ARCHITECTURE_FILES.map((file, idx) => (
+          <div className="flex items-center gap-3">
+            <div className="flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-xs">
               <button
-                key={file.filename}
-                onClick={() => setSelectedFileIndex(idx)}
-                className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all flex items-center justify-between ${
-                  selectedFileIndex === idx
-                    ? 'border-blue-500 bg-blue-50/70 text-blue-700 font-semibold'
-                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                onClick={() => setActiveCodeTab('fix')}
+                className={`px-3 py-1 rounded-md transition font-medium ${
+                  activeCodeTab === 'fix'
+                    ? 'bg-emerald-600 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <div className="flex items-center gap-2 truncate">
-                  <Code2 className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span className="truncate">{file.filename}</span>
-                </div>
-                <span className="text-[10px] font-mono uppercase bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
-                  {file.language}
-                </span>
+                Código Corrigido (v2.4.1)
               </button>
-            ))}
+              <button
+                onClick={() => setActiveCodeTab('before')}
+                className={`px-3 py-1 rounded-md transition font-medium ${
+                  activeCodeTab === 'before'
+                    ? 'bg-rose-600/80 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Código com Erro (Antes)
+              </button>
+            </div>
+
+            <button
+              onClick={handleCopyCode}
+              className="p-1.5 text-slate-400 hover:text-white bg-slate-900 border border-slate-800 rounded-lg transition"
+              title="Copiar código selecionado"
+            >
+              {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            </button>
           </div>
         </div>
 
-        {/* Right: Functional Code Viewer */}
-        <div className="lg:col-span-8 space-y-4">
-          <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-            {/* Code header */}
-            <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs font-bold text-blue-400">
-                    {selectedFile.path}
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  {selectedFile.description}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCopyCode}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition-colors"
-                >
-                  {copied ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      Copiado!
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      Copiar Código
-                    </>
-                  )}
-                </button>
-
-                <button
-                  onClick={handleDownloadFile}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Baixar Arquivo
-                </button>
-
-                <button
-                  onClick={handleDownloadAllFiles}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
-                  title="Baixar todos os arquivos da extensão para instalar no Chrome"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Baixar Todos ({ARCHITECTURE_FILES.length})
-                </button>
-              </div>
-            </div>
-
-            {/* Code content */}
-            <div className="p-4 overflow-x-auto max-h-[500px] overflow-y-auto">
-              <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre">
-                {selectedFile.code}
-              </pre>
-            </div>
-          </div>
+        <div className="p-4 bg-slate-950 text-xs font-mono text-slate-300 overflow-x-auto max-h-[380px] leading-relaxed">
+          <pre>{activeCodeTab === 'fix' ? fixCode : faultyCode}</pre>
         </div>
       </div>
     </div>

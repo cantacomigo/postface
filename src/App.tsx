@@ -1,329 +1,187 @@
 import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
-import { TemplateManager } from './components/templates/TemplateManager';
-import { GroupManager } from './components/groups/GroupManager';
 import { CampaignRunner } from './components/campaign/CampaignRunner';
-import { ReportsPanel } from './components/reports/ReportsPanel';
+import { GroupManager } from './components/groups/GroupManager';
+import { TemplateManager } from './components/templates/TemplateManager';
 import { ArchitectureViewer } from './components/architecture/ArchitectureViewer';
+import { ReportsPanel } from './components/reports/ReportsPanel';
 import { ChromePopupSimulator } from './components/extension/ChromePopupSimulator';
-import {
-  PostTemplate,
-  FacebookGroup,
-  GroupCategory,
-  AntiBanRules,
-  ActiveCampaign,
-  CampaignLog
-} from './types';
-import {
-  loadStoredData,
-  saveStoredData
+import { ExtensionInstallerModal } from './components/extension/ExtensionInstallerModal';
+
+import { 
+  getStoredGroups, 
+  saveGroups, 
+  getStoredTemplates, 
+  saveTemplates, 
+  getStoredAntiBan, 
+  saveAntiBan, 
+  getStoredLogs, 
+  saveLogs 
 } from './utils/storage';
-import { Shield, CheckCircle, Info } from 'lucide-react';
+import { downloadExtensionZip } from './utils/extensionPackage';
+import { FacebookGroup, PostTemplate, AntiBanConfig, ExecutionLog } from './types';
 
-export default function App() {
-  // Load initial states from local storage or defaults
-  const initialData = loadStoredData();
+export function App() {
+  const [activeTab, setActiveTab] = useState('campaign');
+  const [installerModalOpen, setInstallerModalOpen] = useState(false);
+  const [isDownloadingZip, setIsDownloadingZip] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<
-    'campaign' | 'templates' | 'groups' | 'reports' | 'architecture' | 'extension_popup'
-  >('campaign');
+  // Core application state
+  const [groups, setGroups] = useState<FacebookGroup[]>(getStoredGroups);
+  const [templates, setTemplates] = useState<PostTemplate[]>(getStoredTemplates);
+  const [antiBanConfig, setAntiBanConfig] = useState<AntiBanConfig>(getStoredAntiBan);
+  const [logs, setLogs] = useState<ExecutionLog[]>(getStoredLogs);
 
-  const [templates, setTemplates] = useState<PostTemplate[]>(initialData.templates);
-  const [categories, setCategories] = useState<GroupCategory[]>(initialData.categories);
-  const [groups, setGroups] = useState<FacebookGroup[]>(initialData.groups);
-  const [antiBanRules, setAntiBanRules] = useState<AntiBanRules>(initialData.rules);
-  const [logs, setLogs] = useState<CampaignLog[]>(initialData.logs);
-
-  const [campaign, setCampaign] = useState<ActiveCampaign>({
-    id: 'camp-default',
-    name: 'Campanha de Divulgação Segura',
-    templateId: initialData.templates[0]?.id || '',
-    categoryIds: initialData.categories.map((c: GroupCategory) => c.id),
-    selectedGroupIds: initialData.groups.map((g: FacebookGroup) => g.id),
-    status: 'idle',
-    antiBanRules: initialData.rules,
-    currentIndex: 0,
-    totalGroups: initialData.groups.length,
-    successCount: 0,
-    failedCount: 0,
-    postsInCurrentBatch: 0,
-    nextPostCountdown: 0,
-    currentPhaseText: 'Pronto para iniciar. Configure o template e os grupos desejados.'
+  // Selection states
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>(() => {
+    const stored = getStoredGroups();
+    return stored.slice(0, 4).map(g => g.id); // Default seleciona 4 primeiros
+  });
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(() => {
+    const stored = getStoredTemplates();
+    return stored[0]?.id || 'tpl_demarchi_polpas';
   });
 
-  // Sync to local storage
+  // Sync back to localStorage
   useEffect(() => {
-    saveStoredData('TEMPLATES', templates);
-  }, [templates]);
-
-  useEffect(() => {
-    saveStoredData('CATEGORIES', categories);
-  }, [categories]);
-
-  useEffect(() => {
-    saveStoredData('GROUPS', groups);
+    saveGroups(groups);
   }, [groups]);
 
   useEffect(() => {
-    saveStoredData('RULES', antiBanRules);
-  }, [antiBanRules]);
+    saveTemplates(templates);
+  }, [templates]);
 
   useEffect(() => {
-    saveStoredData('LOGS', logs);
+    saveAntiBan(antiBanConfig);
+  }, [antiBanConfig]);
+
+  useEffect(() => {
+    saveLogs(logs);
   }, [logs]);
 
-  // Listener para sincronização automática via Extensão Chrome ou Script de Console
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (
-        (event.data?.type === 'FB_AUTOPAGE_SYNC_GROUPS' || event.data?.type === 'FB_SYNC_GROUPS_RESULT') &&
-        Array.isArray(event.data.groups)
-      ) {
-        handleBulkAddGroups(event.data.groups);
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
-
-  // Handlers for templates
-  const handleSaveTemplate = (tpl: PostTemplate) => {
-    setTemplates((prev) => {
-      const idx = prev.findIndex((t) => t.id === tpl.id);
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = tpl;
-        return next;
-      }
-      return [tpl, ...prev];
-    });
+  // Group selection handlers
+  const handleToggleSelectGroup = (id: string) => {
+    setSelectedGroupIds(prev =>
+      prev.includes(id) ? prev.filter(gId => gId !== id) : [...prev, id]
+    );
   };
 
-  const handleDeleteTemplate = (id: string) => {
-    setTemplates((prev) => prev.filter((t) => t.id !== id));
+  const handleSelectAllGroups = () => {
+    setSelectedGroupIds(groups.map(g => g.id));
   };
 
-  // Handlers for groups
-  const handleSaveGroup = (grp: FacebookGroup) => {
-    setGroups((prev) => {
-      const idx = prev.findIndex((g) => g.id === grp.id);
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = grp;
-        return next;
-      }
-      return [grp, ...prev];
-    });
+  const handleDeselectAllGroups = () => {
+    setSelectedGroupIds([]);
   };
 
-  const handleDeleteGroup = (id: string) => {
-    setGroups((prev) => prev.filter((g) => g.id !== id));
+  const handleUpdateGroupStatus = (groupId: string, status: FacebookGroup['status']) => {
+    setGroups(prev =>
+      prev.map(g => (g.id === groupId ? { ...g, status, postCount: status === 'success' ? g.postCount + 1 : g.postCount } : g))
+    );
   };
 
-  const handleBulkAddGroups = (newGroups: FacebookGroup[]) => {
-    setGroups((prev) => [...newGroups, ...prev]);
-  };
-
-  const handleClearAllGroups = () => {
-    setGroups([]);
-  };
-
-  const handleReplaceAllGroups = (newGroups: FacebookGroup[]) => {
-    setGroups(newGroups);
-  };
-
-  // Handlers for categories
-  const handleSaveCategory = (cat: GroupCategory) => {
-    setCategories((prev) => {
-      const idx = prev.findIndex((c) => c.id === cat.id);
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = cat;
-        return next;
-      }
-      return [...prev, cat];
-    });
-  };
-
-  const handleDeleteCategory = (id: string) => {
-    setCategories((prev) => prev.filter((c) => c.id !== id));
-  };
-
-  // Handlers for logs
-  const handleAddLog = (log: CampaignLog) => {
-    setLogs((prev) => [log, ...prev]);
+  const handleAddLog = (newLog: ExecutionLog) => {
+    setLogs(prev => [newLog, ...prev]);
   };
 
   const handleClearLogs = () => {
-    setLogs([]);
+    if (confirm('Tem certeza de que deseja limpar o histórico de logs?')) {
+      setLogs([]);
+    }
+  };
+
+  const handleDownloadZip = async () => {
+    try {
+      setIsDownloadingZip(true);
+      await downloadExtensionZip();
+    } catch (err) {
+      console.error('Falha ao gerar arquivo ZIP:', err);
+      alert('Não foi possível gerar o ZIP automaticamente. Você pode copiar os arquivos na aba "Extensão Chrome".');
+    } finally {
+      setIsDownloadingZip(false);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans">
-      {/* Top Navigation */}
+    <div className="min-h-screen bg-slate-950 flex flex-col font-['Plus_Jakarta_Sans',sans-serif]">
+      {/* Header */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        isRunning={campaign.status === 'running'}
-        totalLogs={logs.length}
+        onOpenInstaller={() => setInstallerModalOpen(true)}
+        onDownloadZip={handleDownloadZip}
+        isDownloadingZip={isDownloadingZip}
       />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'campaign' && (
           <CampaignRunner
-            templates={templates}
             groups={groups}
-            categories={categories}
-            antiBanRules={antiBanRules}
-            onUpdateAntiBanRules={setAntiBanRules}
-            campaign={campaign}
-            onUpdateCampaign={setCampaign}
-            onAddLog={handleAddLog}
-          />
-        )}
-
-        {activeTab === 'templates' && (
-          <TemplateManager
             templates={templates}
-            onSaveTemplate={handleSaveTemplate}
-            onDeleteTemplate={handleDeleteTemplate}
+            selectedGroupIds={selectedGroupIds}
+            selectedTemplateId={selectedTemplateId}
+            antiBanConfig={antiBanConfig}
+            onUpdateAntiBanConfig={setAntiBanConfig}
+            logs={logs}
+            onAddLog={handleAddLog}
+            onUpdateGroupStatus={handleUpdateGroupStatus}
           />
         )}
 
         {activeTab === 'groups' && (
           <GroupManager
             groups={groups}
-            categories={categories}
-            onSaveGroup={handleSaveGroup}
-            onDeleteGroup={handleDeleteGroup}
-            onBulkAddGroups={handleBulkAddGroups}
-            onClearAllGroups={handleClearAllGroups}
-            onReplaceAllGroups={handleReplaceAllGroups}
-            onSaveCategory={handleSaveCategory}
-            onDeleteCategory={handleDeleteCategory}
+            onUpdateGroups={setGroups}
+            selectedGroupIds={selectedGroupIds}
+            onToggleSelectGroup={handleToggleSelectGroup}
+            onSelectAllGroups={handleSelectAllGroups}
+            onDeselectAllGroups={handleDeselectAllGroups}
           />
+        )}
+
+        {activeTab === 'templates' && (
+          <TemplateManager
+            templates={templates}
+            onUpdateTemplates={setTemplates}
+            selectedTemplateId={selectedTemplateId}
+            onSelectTemplate={setSelectedTemplateId}
+          />
+        )}
+
+        {activeTab === 'diagnostic' && (
+          <ArchitectureViewer />
         )}
 
         {activeTab === 'reports' && (
           <ReportsPanel
             logs={logs}
-            campaign={campaign}
             onClearLogs={handleClearLogs}
           />
         )}
 
-        {activeTab === 'architecture' && (
-          <ArchitectureViewer />
-        )}
-
-        {activeTab === 'extension_popup' && (
+        {activeTab === 'extension' && (
           <ChromePopupSimulator
-            templates={templates}
-            groups={groups}
-            categories={categories}
-            antiBanRules={antiBanRules}
-            campaign={campaign}
-            logs={logs}
-            onStartCampaign={(tplId, catId) => {
-              const targetTemplateId = tplId || campaign.templateId || templates[0]?.id;
-              const targetGroups = groups.filter((g) => {
-                const matchesActive = g.status === 'active';
-                const matchesCategory = !catId || catId === 'all' || g.categoryId === catId;
-                return matchesActive && matchesCategory;
-              });
-
-              if (targetGroups.length === 0) {
-                alert('Nenhum grupo ativo disponível com os filtros selecionados.');
-                return;
-              }
-
-              const selectedTpl = templates.find((t) => t.id === targetTemplateId) || templates[0];
-
-              setCampaign({
-                ...campaign,
-                status: 'running',
-                templateId: targetTemplateId,
-                selectedGroupIds: targetGroups.map((g) => g.id),
-                totalGroups: targetGroups.length,
-                currentIndex: 0,
-                successCount: 0,
-                failedCount: 0,
-                postsInCurrentBatch: 0,
-                nextPostCountdown: 12,
-                currentPhaseText: `Iniciando disparo com o primeiro grupo: "${targetGroups[0]?.name}"...`
-              });
-
-              handleAddLog({
-                id: `log-${Date.now()}`,
-                timestamp: new Date().toLocaleTimeString('pt-BR'),
-                groupId: targetGroups[0]?.id || '',
-                groupName: targetGroups[0]?.name || 'Início via Popup',
-                templateId: selectedTpl.id,
-                templateTitle: selectedTpl.title,
-                status: 'paused_batch',
-                details: `Disparo acionado via Popup da Extensão com ${targetGroups.length} grupos em fila.`,
-                resolvedText: '',
-                delayWaitedSeconds: 0
-              });
-            }}
-            onPauseCampaign={() => {
-              setCampaign((prev) => ({
-                ...prev,
-                status: 'paused',
-                currentPhaseText: 'Pausado via popup da extensão.'
-              }));
-            }}
-            onResumeCampaign={() => {
-              setCampaign((prev) => ({
-                ...prev,
-                status: 'running',
-                currentPhaseText: 'Retomado via popup da extensão.'
-              }));
-            }}
-            onStopCampaign={() => {
-              setCampaign((prev) => ({
-                ...prev,
-                status: 'aborted',
-                currentPhaseText: 'Campanha finalizada via popup da extensão.',
-                completedAt: new Date().toISOString()
-              }));
-            }}
-            onSkipWait={() => {
-              setCampaign((prev) => ({
-                ...prev,
-                nextPostCountdown: 1
-              }));
-            }}
-            onSelectTemplate={(tplId) => {
-              setCampaign((prev) => ({
-                ...prev,
-                templateId: tplId
-              }));
-            }}
-            onOpenFullDashboard={() => setActiveTab('campaign')}
+            onDownloadZip={handleDownloadZip}
+            isDownloadingZip={isDownloadingZip}
           />
         )}
       </main>
 
-      {/* System Status Footer */}
-      <footer className="bg-white border-t border-slate-200 py-3 text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-emerald-600" />
-            <span>
-              Arquitetura Segura Anti-Ban: Operando via Sessão Ativa do Navegador (Zero Credenciais Armazenadas)
-            </span>
-          </div>
-          <div className="flex items-center gap-4 text-[11px] text-slate-400">
-            <span>Delay: {antiBanRules.minDelaySeconds}s-{antiBanRules.maxDelaySeconds}s</span>
-            <span>•</span>
-            <span>Pausas: Cada {antiBanRules.blockBatchSize} posts</span>
-            <span>•</span>
-            <span>Spintax Ativado</span>
-          </div>
-        </div>
+      {/* Footer */}
+      <footer className="border-t border-slate-900 bg-slate-950/60 py-4 text-center text-xs text-slate-500">
+        AutoPost FB Anti-Ban v2.4.1 • Sistema Especializado de Postagem Segura em Grupos com Injeção Atômica Anti-Duplicação
       </footer>
+
+      {/* Installation Modal */}
+      <ExtensionInstallerModal
+        isOpen={installerModalOpen}
+        onClose={() => setInstallerModalOpen(false)}
+        onDownloadZip={handleDownloadZip}
+        isDownloadingZip={isDownloadingZip}
+      />
     </div>
   );
 }
+
+export default App;

@@ -1,83 +1,96 @@
 /**
- * Spintax Resolver & Text Variation Engine
- * Transforms strings with simple or nested Spintax like:
- * "{Olá|Oi|{Bom dia|Boa tarde}} {amigos|{parceiros|colegas}}" into unique human-like posts.
+ * Utilitário de Spintax para o AutoPost FB
+ * Suporta spintax aninhado: {Opção 1|{Opção 2A|Opção 2B}|Opção 3}
+ * Substituição de variáveis contextuais ({nome_grupo}, {saudacao}, etc.)
+ * Proteção anti-hash com caracteres invisíveis (zero-width spaces)
  */
 
-export function resolveSpintax(text: string): string {
+export function parseSpintax(text: string): string {
   if (!text) return '';
 
-  // Matches innermost {choice1|choice2|...} without containing nested braces
-  const regex = /\{([^{}]+)\}/;
-  let resolved = text;
-  let safetyLimit = 100;
+  let current = text;
+  const spintaxRegex = /\{([^{}]+)\}/;
 
-  while (regex.test(resolved) && safetyLimit > 0) {
+  let match;
+  let safetyLimit = 100; // Previne loops infinitos em caso de sintaxe corrompida
+
+  while ((match = spintaxRegex.exec(current)) !== null && safetyLimit > 0) {
     safetyLimit--;
-    resolved = resolved.replace(regex, (_, choicesStr: string) => {
-      const choices = choicesStr.split('|');
-      const chosen = choices[Math.floor(Math.random() * choices.length)];
-      return chosen !== undefined ? chosen.trim() : '';
-    });
+    const options = match[1].split('|');
+    const randomChoice = options[Math.floor(Math.random() * options.length)];
+    current = current.replace(match[0], randomChoice);
   }
 
-  return resolved;
+  return current;
 }
 
 /**
- * Calculates approximately how many unique post variations a spintax string can produce,
- * properly handling nested brackets like {A|{B|C}} (= 3 options) * {X|Y} (= 2 options) = 6.
+ * Calcula aproximadamente a quantidade de variações possíveis geradas pelo Spintax
  */
-export function calculateVariationsCount(text: string): number {
+export function countSpintaxVariations(text: string): number {
   if (!text) return 1;
 
-  // We can calculate variations by reducing innermost braces to their numeric counts
-  const regex = /\{([^{}]+)\}/;
-  let working = text;
+  let simplified = text;
+  const spintaxRegex = /\{([^{}]+)\}/;
+  let variations = 1;
+  let match;
   let safetyLimit = 50;
 
-  // Track top-level multipliers
-  while (regex.test(working) && safetyLimit > 0) {
+  while ((match = spintaxRegex.exec(simplified)) !== null && safetyLimit > 0) {
     safetyLimit--;
-    working = working.replace(regex, (_, choicesStr: string) => {
-      const choices = choicesStr.split('|');
-      // Sum the values if nested already evaluated to numbers, or count 1 per literal choice
-      let groupSum = 0;
-      for (const choice of choices) {
-        const trimmed = choice.trim();
-        const num = parseInt(trimmed, 10);
-        if (!isNaN(num) && String(num) === trimmed) {
-          groupSum += num;
-        } else {
-          groupSum += 1;
-        }
-      }
-      return String(Math.max(1, groupSum));
-    });
+    const count = match[1].split('|').length;
+    variations *= count;
+    simplified = simplified.replace(match[0], 'X');
   }
 
-  // Multiply all remaining standalone counts from the text
-  const numbersRegex = /\b\d+\b/g;
-  let totalCombinations = 1;
-  let match;
-  let foundAny = false;
-
-  while ((match = numbersRegex.exec(working)) !== null) {
-    foundAny = true;
-    totalCombinations *= Math.max(1, parseInt(match[0], 10));
-  }
-
-  return foundAny ? totalCombinations : 1;
+  return Math.min(variations, 1000000);
 }
 
 /**
- * Generates sample variations for previewing in UI
+ * Aplica variáveis contextuais e proteção anti-hash
  */
-export function generateSampleVariations(text: string, count: number = 3): string[] {
-  const variations = new Set<string>();
-  for (let i = 0; i < count * 10; i++) {
-    variations.add(resolveSpintax(text));
-    if (variations.size >= count) break;
+export function renderTemplate(
+  templateBody: string,
+  variables: {
+    nome_grupo?: string;
+    nome_usuario?: string;
+    categoria?: string;
+  } = {},
+  options: {
+    useZeroWidthSpaces?: boolean;
+  } = {}
+): string {
+  // 1. Processar Spintax
+  let result = parseSpintax(templateBody);
+
+  // 2. Definir saudações dinâmicas pelo horário
+  const hour = new Date().getHours();
+  let defaultGreeting = 'Olá';
+  if (hour >= 5 && hour < 12) defaultGreeting = 'Bom dia';
+  else if (hour >= 12 && hour < 18) defaultGreeting = 'Boa tarde';
+  else defaultGreeting = 'Boa noite';
+
+  // 3. Substituir tags dinâmicas
+  const tags: Record<string, string> = {
+    '{nome_grupo}': variables.nome_grupo || 'grupo',
+    '{saudacao}': defaultGreeting,
+    '{data}': new Date().toLocaleDateString('pt-BR'),
+    '{hora}': new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    '{categoria}': variables.categoria || 'Geral',
+  };
+
+  for (const [tag, val] of Object.entries(tags)) {
+    result = result.split(tag).join(val);
   }
-  return Array.from(variations);
+
+  // 4. Adicionar caracteres invisíveis anti-hash aleatoriamente (se habilitado)
+  if (options.useZeroWidthSpaces) {
+    const zwsp = '\u200B';
+    const words = result.split(' ');
+    result = words
+      .map((w, idx) => (idx % 4 === 0 && Math.random() > 0.4 ? w + zwsp : w))
+      .join(' ');
+  }
+
+  return result.trim();
 }
