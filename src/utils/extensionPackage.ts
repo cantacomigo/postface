@@ -7,7 +7,7 @@ export interface ExtensionFile {
   content: string;
 }
 
-export const EXTENSION_VERSION = '2.4.1';
+export const EXTENSION_VERSION = '3.3.0';
 
 export function getExtensionFiles(): ExtensionFile[] {
   const manifest = `{
@@ -578,7 +578,7 @@ export async function downloadExtensionZip(): Promise<void> {
 
   const a = document.createElement('a');
   a.href = url;
-  a.download = `autopost-fb-antiban-v${EXTENSION_VERSION}.zip`;
+  a.download = `autopost-fb-extensao-v3.3.zip`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

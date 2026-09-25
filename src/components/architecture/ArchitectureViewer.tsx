@@ -163,7 +163,7 @@ editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: text })); //
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
         <h3 className="text-base font-bold text-white flex items-center gap-2">
           <ShieldCheck className="w-5 h-5 text-emerald-400" />
-          As 4 Camadas de Proteção Aplicadas na Nova Versão (v2.4.1)
+          As 4 Camadas de Proteção Aplicadas na Nova Versão (v3.3)
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

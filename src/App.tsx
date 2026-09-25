@@ -170,7 +170,7 @@ export function App() {
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950/60 py-4 text-center text-xs text-slate-500">
-        AutoPost FB Anti-Ban v2.4.1 • Sistema Especializado de Postagem Segura em Grupos com Injeção Atômica Anti-Duplicação
+        AutoPost FB Anti-Ban v3.3 • Sistema Especializado de Postagem Segura em Grupos com Injeção Atômica Anti-Duplicação 1x
       </footer>
 
       {/* Installation Modal */}
