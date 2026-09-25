@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   FileText, 
   Plus, 
@@ -9,8 +9,10 @@ import {
   Image as ImageIcon, 
   Eye, 
   Layers, 
-  ShieldCheck, 
-  RefreshCw 
+  Upload, 
+  Link as LinkIcon, 
+  X, 
+  AlertCircle 
 } from 'lucide-react';
 import { PostTemplate } from '../../types';
 import { renderTemplate, countSpintaxVariations } from '../../utils/spintax';
@@ -20,6 +22,41 @@ interface TemplateManagerProps {
   onUpdateTemplates: (templates: PostTemplate[]) => void;
   selectedTemplateId: string;
   onSelectTemplate: (templateId: string) => void;
+}
+
+// Otimiza e converte arquivo de imagem para Data URL leve
+function processImageFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 1200;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > MAX_WIDTH) {
+          height = Math.round((height * MAX_WIDTH) / width);
+          width = MAX_WIDTH;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        } else {
+          resolve(e.target?.result as string);
+        }
+      };
+      img.onerror = () => resolve(e.target?.result as string);
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 export const TemplateManager: React.FC<TemplateManagerProps> = ({
@@ -33,10 +70,19 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
   const [copied, setCopied] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
 
+  // Upload states
+  const [imageUrlInput, setImageUrlInput] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const newModalFileInputRef = useRef<HTMLInputElement>(null);
+
   // Form states for new template
   const [newName, setNewName] = useState('');
   const [newCategory, setNewCategory] = useState('Geral');
   const [newBody, setNewBody] = useState('');
+  const [newMediaUrls, setNewMediaUrls] = useState<string[]>([]);
+  const [newUrlInput, setNewUrlInput] = useState('');
 
   const currentTemplate = templates.find(t => t.id === activeEditingId) || templates[0];
 
@@ -72,6 +118,111 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
     handleUpdateCurrentBody(updated);
   };
 
+  // --- Upload Handlers for Current Template ---
+  const handleFilesSelected = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !currentTemplate) return;
+    setUploadError(null);
+
+    try {
+      const processedPromises: Promise<string>[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (!file.type.startsWith('image/')) {
+          setUploadError('Por favor, selecione apenas arquivos de imagem (PNG, JPG, JPEG, WEBP).');
+          continue;
+        }
+        processedPromises.push(processImageFile(file));
+      }
+
+      const newUrls = await Promise.all(processedPromises);
+      if (newUrls.length > 0) {
+        const existing = currentTemplate.mediaUrls || [];
+        const updated = templates.map(t =>
+          t.id === currentTemplate.id ? { ...t, mediaUrls: [...existing, ...newUrls] } : t
+        );
+        onUpdateTemplates(updated);
+      }
+    } catch (err) {
+      console.error('Erro ao processar imagem:', err);
+      setUploadError('Falha ao carregar a imagem. Tente uma imagem menor.');
+    }
+  };
+
+  const handleAddImageUrl = () => {
+    if (!imageUrlInput.trim() || !currentTemplate) return;
+    setUploadError(null);
+
+    const url = imageUrlInput.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:image')) {
+      setUploadError('URL de imagem inválida. Deve iniciar com https://');
+      return;
+    }
+
+    const existing = currentTemplate.mediaUrls || [];
+    const updated = templates.map(t =>
+      t.id === currentTemplate.id ? { ...t, mediaUrls: [...existing, url] } : t
+    );
+    onUpdateTemplates(updated);
+    setImageUrlInput('');
+  };
+
+  const handleRemoveImage = (indexToRemove: number) => {
+    if (!currentTemplate) return;
+    const existing = currentTemplate.mediaUrls || [];
+    const updated = templates.map(t =>
+      t.id === currentTemplate.id
+        ? { ...t, mediaUrls: existing.filter((_, idx) => idx !== indexToRemove) }
+        : t
+    );
+    onUpdateTemplates(updated);
+  };
+
+  // Drag and Drop
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await handleFilesSelected(e.dataTransfer.files);
+    }
+  };
+
+  // --- Handlers for New Template Modal Upload ---
+  const handleNewModalFilesSelected = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    try {
+      const processedPromises: Promise<string>[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.type.startsWith('image/')) {
+          processedPromises.push(processImageFile(file));
+        }
+      }
+      const urls = await Promise.all(processedPromises);
+      setNewMediaUrls(prev => [...prev, ...urls]);
+    } catch (err) {
+      console.error('Erro ao processar imagem:', err);
+    }
+  };
+
+  const handleAddNewModalUrl = () => {
+    if (!newUrlInput.trim()) return;
+    setNewMediaUrls(prev => [...prev, newUrlInput.trim()]);
+    setNewUrlInput('');
+  };
+
+  const handleRemoveNewModalImage = (index: number) => {
+    setNewMediaUrls(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleCreateTemplate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim() || !newBody.trim()) return;
@@ -81,7 +232,7 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
       name: newName.trim(),
       category: newCategory.trim(),
       bodyWithSpintax: newBody.trim(),
-      mediaUrls: [
+      mediaUrls: newMediaUrls.length > 0 ? newMediaUrls : [
         'https://images.unsplash.com/photo-1610832958506-aa56368176cf?auto=format&fit=crop&w=800&q=80'
       ],
       tags: ['Personalizado'],
@@ -94,6 +245,7 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
     onSelectTemplate(newTpl.id);
     setNewName('');
     setNewBody('');
+    setNewMediaUrls([]);
     setShowNewModal(false);
   };
 
@@ -128,20 +280,23 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
             Gerenciador de Templates & Motor Spintax
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Crie copys com variações automáticas anti-bloqueio e injeção única sem repetições
+            Crie copys com variações automáticas anti-bloqueio e fotos anexadas para os posts
           </p>
         </div>
 
         <button
-          onClick={() => setShowNewModal(true)}
-          className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-sm transition flex items-center gap-1.5"
+          onClick={() => {
+            setNewMediaUrls([]);
+            setShowNewModal(true);
+          }}
+          className="px-3.5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-sm transition flex items-center gap-1.5 active:scale-95"
         >
           <Plus className="w-4 h-4" />
           <span>Novo Template</span>
         </button>
       </div>
 
-      {/* Main Grid: Template List + Editor + Live FB Preview */}
+      {/* Main Grid: Template List + Editor */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left: Template Selector List */}
         <div className="lg:col-span-4 space-y-3">
@@ -187,16 +342,24 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
                       <Layers className="w-3 h-3 text-indigo-400" />
                       {countSpintaxVariations(tpl.bodyWithSpintax)} variações
                     </span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteTemplate(tpl.id);
-                      }}
-                      className="p-1 hover:text-rose-400 transition"
-                      title="Excluir template"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {tpl.mediaUrls && tpl.mediaUrls.length > 0 && (
+                        <span className="flex items-center gap-1 text-slate-400">
+                          <ImageIcon className="w-3 h-3 text-blue-400" />
+                          {tpl.mediaUrls.length}
+                        </span>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteTemplate(tpl.id);
+                        }}
+                        className="p-1 hover:text-rose-400 transition"
+                        title="Excluir template"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -204,10 +367,10 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
           </div>
         </div>
 
-        {/* Center: Spintax Code Editor */}
+        {/* Center/Right: Spintax Code Editor + Image Upload Section */}
         <div className="lg:col-span-8 space-y-4">
           {currentTemplate && (
-            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 space-y-4 shadow-lg">
+            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 space-y-5 shadow-lg">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -257,11 +420,133 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
                   Texto com Sintaxe Spintax (Use <code className="text-indigo-400">{'{Opção A|Opção B}'}</code> para variações)
                 </label>
                 <textarea
-                  rows={9}
+                  rows={8}
                   value={currentTemplate.bodyWithSpintax}
                   onChange={(e) => handleUpdateCurrentBody(e.target.value)}
                   className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 font-mono leading-relaxed focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
+              </div>
+
+              {/* IMAGE UPLOAD & MEDIA SECTION */}
+              <div className="bg-slate-950/90 rounded-2xl p-4 sm:p-5 border border-slate-800 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ImageIcon className="w-4 h-4 text-blue-400" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      Fotos Anexadas na Publicação ({currentTemplate.mediaUrls?.length || 0})
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400">
+                    Formatos: JPG, PNG, WEBP
+                  </span>
+                </div>
+
+                {uploadError && (
+                  <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                    <span>{uploadError}</span>
+                  </div>
+                )}
+
+                {/* Dropzone & File Input Button */}
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-2xl p-4 sm:p-6 text-center transition-all ${
+                    isDragging
+                      ? 'border-blue-500 bg-blue-500/10 scale-[1.01]'
+                      : 'border-slate-800 hover:border-slate-700 bg-slate-900/40'
+                  }`}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => handleFilesSelected(e.target.files)}
+                  />
+
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <div className="w-10 h-10 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30 flex items-center justify-center shadow-inner">
+                      <Upload className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-200">
+                        Arraste e solte fotos aqui ou clique para selecionar
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Fotos de polpas, produtos, receitas ou banners promocionais
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="mt-1 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-xl shadow-md transition flex items-center gap-1.5 active:scale-95"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Selecionar Imagens do Computador</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Ou adicionar por URL */}
+                <div className="flex items-center gap-2 pt-1">
+                  <div className="relative flex-1">
+                    <LinkIcon className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <input
+                      type="url"
+                      placeholder="Ou cole o link direto de uma imagem (https://...)"
+                      value={imageUrlInput}
+                      onChange={(e) => setImageUrlInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddImageUrl())}
+                      className="w-full pl-8 pr-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddImageUrl}
+                    disabled={!imageUrlInput.trim()}
+                    className="px-3.5 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 rounded-xl border border-slate-700 transition"
+                  >
+                    Adicionar URL
+                  </button>
+                </div>
+
+                {/* Thumbnails Gallery */}
+                {currentTemplate.mediaUrls && currentTemplate.mediaUrls.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                    {currentTemplate.mediaUrls.map((url, idx) => (
+                      <div
+                        key={idx}
+                        className="relative group rounded-xl overflow-hidden border border-slate-800 bg-slate-900 aspect-video shadow"
+                      >
+                        <img
+                          src={url}
+                          alt={`Anexo ${idx + 1}`}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveImage(idx)}
+                          className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-black/70 hover:bg-rose-600 text-white transition shadow opacity-90 hover:opacity-100"
+                          title="Remover esta foto"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                        <div className="absolute bottom-1 left-1.5 bg-black/60 px-1.5 py-0.5 rounded text-[10px] text-white font-mono">
+                          Foto #{idx + 1}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 text-center py-2">
+                    Nenhuma foto anexada a este template. O post será publicado apenas com texto.
+                  </p>
+                )}
               </div>
 
               {/* Live Preview Box (Simulation of FB Post) */}
@@ -290,23 +575,23 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
                   </button>
                 </div>
 
-                <div className="bg-slate-900/90 rounded-lg p-3 text-xs text-slate-200 whitespace-pre-wrap leading-relaxed border border-slate-800">
+                <div className="bg-slate-900/90 rounded-lg p-3 text-xs text-slate-200 whitespace-pre-wrap leading-relaxed border border-slate-800 font-sans">
                   {previewText || 'Clique em "Testar Spintax" para renderizar.'}
                 </div>
 
-                {/* Media Preview */}
+                {/* Media Preview in Post */}
                 {currentTemplate.mediaUrls && currentTemplate.mediaUrls.length > 0 && (
                   <div>
                     <span className="text-[11px] text-slate-400 flex items-center gap-1 mb-2">
-                      <ImageIcon className="w-3 h-3 text-slate-400" /> Fotos anexadas na publicação:
+                      <ImageIcon className="w-3 h-3 text-slate-400" /> Visualização no Feed do Facebook:
                     </span>
-                    <div className="flex gap-2 overflow-x-auto pb-1">
-                      {currentTemplate.mediaUrls.map((url, i) => (
+                    <div className="grid grid-cols-2 gap-2">
+                      {currentTemplate.mediaUrls.slice(0, 4).map((url, i) => (
                         <img
                           key={i}
                           src={url}
                           alt="Prévia de foto"
-                          className="h-20 w-28 object-cover rounded-lg border border-slate-800 shadow"
+                          className="h-28 w-full object-cover rounded-xl border border-slate-800 shadow"
                         />
                       ))}
                     </div>
@@ -320,16 +605,25 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
 
       {/* Modal Novo Template */}
       {showNewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4">
-            <h3 className="text-lg font-bold text-white">Criar Novo Template com Spintax</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <h3 className="text-lg font-bold text-white">Criar Novo Template com Spintax & Fotos</h3>
+              <button
+                onClick={() => setShowNewModal(false)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
             <form onSubmit={handleCreateTemplate} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1">Nome do Modelo</label>
                 <input
                   type="text"
                   required
-                  placeholder="Ex: Polpas Congeladas - Oferta Especial"
+                  placeholder="Ex: Polpas de Frutas Naturais - Oferta Especial"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -351,13 +645,75 @@ export const TemplateManager: React.FC<TemplateManagerProps> = ({
                   Texto (com suporte a Spintax {'{A|B|C}'})
                 </label>
                 <textarea
-                  rows={6}
+                  rows={5}
                   required
                   value={newBody}
                   onChange={(e) => setNewBody(e.target.value)}
-                  placeholder="{Olá|Oi} amigos do {nome_grupo}! Conheçam nossos produtos..."
+                  placeholder="{Olá|Oi} amigos do {nome_grupo}! Conheçam nossos produtos de qualidade..."
                   className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
+              </div>
+
+              {/* Upload de Imagens no Modal */}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                <label className="block text-xs font-medium text-slate-300">
+                  Anexar Fotos no Novo Template
+                </label>
+
+                <input
+                  ref={newModalFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => handleNewModalFilesSelected(e.target.files)}
+                />
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => newModalFileInputRef.current?.click()}
+                    className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition flex items-center gap-1.5"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Subir Fotos do Computador</span>
+                  </button>
+
+                  <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                    <input
+                      type="url"
+                      placeholder="Ou cole link da imagem..."
+                      value={newUrlInput}
+                      onChange={(e) => setNewUrlInput(e.target.value)}
+                      className="flex-1 px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddNewModalUrl}
+                      disabled={!newUrlInput.trim()}
+                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 rounded-lg disabled:opacity-50"
+                    >
+                      Inserir
+                    </button>
+                  </div>
+                </div>
+
+                {newMediaUrls.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 pt-2">
+                    {newMediaUrls.map((url, i) => (
+                      <div key={i} className="relative group rounded-lg overflow-hidden border border-slate-800 aspect-video">
+                        <img src={url} alt="Anexo" className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveNewModalImage(i)}
+                          className="absolute top-1 right-1 p-1 bg-black/70 hover:bg-rose-600 text-white rounded"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

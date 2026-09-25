@@ -465,14 +465,14 @@ export const CampaignRunner: React.FC<CampaignRunnerProps> = ({
                 )}
               </div>
 
-              {/* Media Preview if De Marchi */}
+              {/* Media Preview if attached */}
               {activeTemplate?.mediaUrls && activeTemplate.mediaUrls.length > 0 && (
                 <div className="grid grid-cols-2 gap-2">
-                  {activeTemplate.mediaUrls.slice(0, 2).map((url, i) => (
+                  {activeTemplate.mediaUrls.slice(0, 4).map((url, i) => (
                     <img
                       key={i}
                       src={url}
-                      alt="Anexo de polpa"
+                      alt="Anexo de foto"
                       className="rounded-lg h-24 w-full object-cover border border-[#3A3B3C]"
                     />
                   ))}
