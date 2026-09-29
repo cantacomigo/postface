@@ -22,71 +22,130 @@ export const DEFAULT_ANTIBAN_CONFIG: AntiBanConfig = {
   zeroWidthRandomizer: true,
 };
 
-export const INITIAL_GROUPS: FacebookGroup[] = [
-  {
-    id: 'grp_001',
-    name: 'Alimentação Saudável & Sucos Naturais BR',
-    url: 'https://www.facebook.com/groups/alimentacaosaudavelbrasil',
-    category: 'Saúde e Nutrição',
-    membersCount: 42800,
-    status: 'ready',
-    postCount: 14,
-    tags: ['Fit', 'Sucos', 'Saúde'],
-    notes: 'Grupo ativo, moderador aceita dicas de produtos saudáveis.',
-  },
-  {
-    id: 'grp_002',
-    name: 'Receitas Fitness, Vitaminas e Detox',
-    url: 'https://www.facebook.com/groups/receitasfitvitaminasdetox',
-    category: 'Gastronomia Fit',
-    membersCount: 89300,
-    status: 'ready',
-    postCount: 22,
-    tags: ['Detox', 'Polpas', 'Vitaminas'],
-    notes: 'Melhor horário para postar: manhã e tarde.',
-  },
-  {
-    id: 'grp_003',
-    name: 'Feira Livre e Hortifruti SP & Região',
-    url: 'https://www.facebook.com/groups/feiralivrehortifrutisp',
-    category: 'Comércio Local',
-    membersCount: 31200,
-    status: 'ready',
-    postCount: 8,
-    tags: ['Frutas', 'Comércio', 'SP'],
-    notes: 'Excelente engajamento para polpas e frutas congeladas.',
-  },
-  {
-    id: 'grp_004',
-    name: 'Empreendedores de Açaí, Sorvetes e Sucos',
-    url: 'https://www.facebook.com/groups/empreendedoresacaisorvetes',
-    category: 'Negócios / B2B',
-    membersCount: 19500,
-    status: 'ready',
-    postCount: 5,
-    tags: ['B2B', 'Atacado', 'FoodService'],
-  },
-  {
-    id: 'grp_005',
-    name: 'Vida Saudável & Nutrição Prática RJ',
-    url: 'https://www.facebook.com/groups/vidasaudavelnutricaorj',
-    category: 'Saúde',
-    membersCount: 27400,
-    status: 'ready',
-    postCount: 11,
-    tags: ['Fit', 'Praticidade'],
-  },
-  {
-    id: 'grp_006',
-    name: 'Mães e Família: Lanches Rápidos & Saudáveis',
-    url: 'https://www.facebook.com/groups/maeslanchessaudaveis',
-    category: 'Família / Culinária',
-    membersCount: 54100,
-    status: 'ready',
-    postCount: 9,
-    tags: ['Crianças', 'Lanches', 'Naturais'],
-  },
-];
+export const INITIAL_GROUPS: FacebookGroup[] = [];
+
+const DEMO_GROUP_SLUGS = new Set([
+  'alimentacaosaudavelbrasil',
+  'receitasfitvitaminasdetox',
+  'feiralivrehortifrutisp',
+  'empreendedoresacaisorvetes',
+  'vidasaudavelnutricaorj',
+  'maeslanchessaudaveis',
+  'feiraorganicabrasil',
+  'clubedasvitaminasdetox',
+  'comercianteshortifrutisp',
+  'empreendedoresalimenticiolanches',
+  'receitasrapidasvidasaudavel',
+  'feiralivrezonalestesp',
+]);
+
+export function isInvalidGroupName(name?: string): boolean {
+  if (!name) return true;
+  const clean = name.replace(/\s+/g, ' ').trim();
+  if (clean.length < 2) return true;
+  const lower = clean.toLowerCase();
+  const invalidExact = new Set([
+    'ver grupo',
+    'view group',
+    'visitar',
+    'visitar grupo',
+    'abrir',
+    'acessar',
+    'grupo fb',
+    'grupo do facebook',
+    'grupo',
+    'grupos',
+    'groups',
+    'seus grupos',
+    'your groups',
+    'ver tudo',
+    'see all',
+    'ver mais',
+    'see more',
+    'mostrar mais',
+    'participar',
+    'participar do grupo',
+    'join',
+    'join group',
+    'participando',
+    'joined',
+    'criar novo grupo',
+    'criar grupo',
+    'seu feed',
+    'descobrir',
+    'notificações',
+    'configurações',
+    'fixar',
+    'desafixar',
+    'mais',
+  ]);
+  if (invalidExact.has(lower)) return true;
+  if (/^(última atividade|last active|atividade recente|há\s+\d|ativo há|\d+\s*(mil|k)?\s*(membro|member|publicaç|post)|novo\b|\+\d+$)/i.test(lower)) {
+    return true;
+  }
+  return false;
+}
+
+export function normalizeGroupUrl(rawUrl: string): string | null {
+  try {
+    const trimmed = rawUrl.trim();
+    const withProto = trimmed.startsWith('http') ? trimmed : 'https://' + trimmed;
+    const u = new URL(withProto);
+    const match = u.pathname.match(/\/groups\/([^/?#]+)/i);
+    if (!match) return null;
+    const slug = match[1];
+    if (
+      [
+        'feed',
+        'discover',
+        'create',
+        'notifications',
+        'joins',
+        'member',
+        'search',
+        'categories',
+        'settings',
+        'yours',
+        'browse',
+        'pending',
+        'archived',
+      ].includes(slug.toLowerCase())
+    ) {
+      return null;
+    }
+    return `https://www.facebook.com/groups/${slug}/`;
+  } catch {
+    return null;
+  }
+}
+
+export function sanitizeGroupsList(list: FacebookGroup[]): FacebookGroup[] {
+  if (!Array.isArray(list)) return [];
+  const seenUrls = new Set<string>();
+  const result: FacebookGroup[] = [];
+
+  for (const g of list) {
+    if (!g || !g.url || isInvalidGroupName(g.name)) continue;
+    const cleanUrl = normalizeGroupUrl(g.url);
+    if (!cleanUrl) continue;
+
+    const slugMatch = cleanUrl.match(/\/groups\/([^/?#]+)/i);
+    const slug = slugMatch ? slugMatch[1].toLowerCase() : '';
+    if (DEMO_GROUP_SLUGS.has(slug)) continue;
+
+    const urlKey = cleanUrl.toLowerCase();
+    if (seenUrls.has(urlKey)) continue;
+    seenUrls.add(urlKey);
+
+    result.push({
+      ...g,
+      name: g.name.replace(/\s+/g, ' ').trim(),
+      url: cleanUrl,
+    });
+  }
+
+  return result;
+}
 
 export const INITIAL_TEMPLATES: PostTemplate[] = [
   {
@@ -158,7 +217,12 @@ export function getStoredGroups(): FacebookGroup[] {
       localStorage.setItem(STORAGE_KEYS.GROUPS, JSON.stringify(INITIAL_GROUPS));
       return INITIAL_GROUPS;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    const cleaned = sanitizeGroupsList(parsed);
+    if (cleaned.length !== parsed.length) {
+      localStorage.setItem(STORAGE_KEYS.GROUPS, JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch {
     return INITIAL_GROUPS;
   }
@@ -166,7 +230,8 @@ export function getStoredGroups(): FacebookGroup[] {
 
 export function saveGroups(groups: FacebookGroup[]): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.GROUPS, JSON.stringify(groups));
+    const cleaned = sanitizeGroupsList(groups);
+    localStorage.setItem(STORAGE_KEYS.GROUPS, JSON.stringify(cleaned));
   } catch (e) {
     console.error('Falha ao salvar grupos:', e);
   }

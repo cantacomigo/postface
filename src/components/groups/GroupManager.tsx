@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, 
   Plus, 
@@ -23,6 +23,58 @@ import {
   X
 } from 'lucide-react';
 import { FacebookGroup } from '../../types';
+import { isInvalidGroupName, normalizeGroupUrl } from '../../utils/storage';
+
+const CONSOLE_EXTRACTOR_SCRIPT = `(() => {
+  const invalid = new Set(['ver grupo','view group','visitar','visitar grupo','abrir','acessar','grupo fb','grupo do facebook','grupo','grupos','groups','seus grupos','your groups','ver tudo','see all','ver mais','see more','mostrar mais','participar','participar do grupo','join','join group','participando','joined','criar novo grupo','criar grupo','create new group','seu feed','your feed','descobrir','discover','notificações','notifications','configurações','settings','fixar','desafixar','mais','compartilhar','convidar','público','privado','public','private','admin','administrador','moderador','todos os grupos dos quais você participa','grupos que você gerencia','grupos dos quais você participa','sugestões para você','mais sugestões']);
+  const isValid = (raw) => {
+    if (!raw) return false;
+    const s = raw.replace(/\\s+/g, ' ').trim();
+    if (s.length < 2 || s.length > 140) return false;
+    const low = s.toLowerCase();
+    if (invalid.has(low)) return false;
+    if (/^(última atividade|last active|atividade recente|última visita|há\\s+\\d|ativo há|\\d+\\s*(mil|k|m)?\\s*(membro|member|publicaç|post|visita)|novo\\b|\\+\\d+$|você gerencia|solicitação|pendente|grupo\\s+\\d+$)/i.test(low)) return false;
+    return true;
+  };
+  const getSlug = (href) => {
+    try {
+      const u = new URL(href, location.origin);
+      const m = u.pathname.match(/^\\/groups\\/([^/?#]+)\\/?$/i);
+      if (!m) return null;
+      const slug = m[1];
+      if (['feed','discover','create','notifications','joins','member','search','categories','settings','yours','browse','pending','archived'].includes(slug.toLowerCase())) return null;
+      return slug;
+    } catch { return null; }
+  };
+  const anchors = Array.from(document.querySelectorAll('a[href*="/groups/"]'));
+  const map = new Map();
+  for (const a of anchors) {
+    const slug = getSlug(a.href);
+    if (!slug) continue;
+    const key = slug.toLowerCase();
+    if (map.has(key)) continue;
+    let card = a, p = a.parentElement;
+    for (let i = 0; i < 7 && p && p !== document.body; i++) {
+      const slugs = new Set(Array.from(p.querySelectorAll('a[href*="/groups/"]')).map(l => getSlug(l.href)?.toLowerCase()).filter(Boolean));
+      if (slugs.size <= 1) { card = p; p = p.parentElement; } else break;
+    }
+    const cardLines = (card.innerText || '').split('\\n').map(l => l.trim()).filter(Boolean);
+    if (cardLines.some(l => /^(participar|participar do grupo|join|join group)$/i.test(l))) continue;
+    let name = '';
+    for (const line of (a.innerText || '').split('\\n').map(l => l.trim()).filter(Boolean)) {
+      if (isValid(line)) { name = line; break; }
+    }
+    if (!name && card !== a) {
+      for (const line of cardLines) {
+        if (isValid(line)) { name = line; break; }
+      }
+    }
+    if (!name && isValid(a.getAttribute('aria-label'))) name = a.getAttribute('aria-label').trim();
+    if (name) map.set(key, name + ' | https://www.facebook.com/groups/' + slug + '/');
+  }
+  copy(Array.from(map.values()).join('\\n'));
+  console.log('✅ ' + map.size + ' grupos reais da sua lista copiados! Agora cole no AutoPost FB.');
+})();`;
 
 interface GroupManagerProps {
   groups: FacebookGroup[];
@@ -61,9 +113,74 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   const [isScanning, setIsScanning] = useState(false);
   const [scanStep, setScanStep] = useState<string>('');
   const [scanProgress, setScanProgress] = useState(0);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [discoveredGroups, setDiscoveredGroups] = useState<DiscoveredGroup[]>([]);
   const [copiedConsoleCode, setCopiedConsoleCode] = useState(false);
   const [consoleInput, setConsoleInput] = useState('');
+  const scanTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (!event.data || !event.data.type) return;
+
+      if (event.data.type === 'AUTOPOST_EXTRACT_GROUPS_STEP') {
+        const { step, progress } = event.data.payload || {};
+        if (step) setScanStep(step);
+        if (typeof progress === 'number') setScanProgress(progress);
+      }
+
+      if (event.data.type === 'AUTOPOST_GROUPS_EXTRACTED') {
+        if (scanTimeoutRef.current) {
+          window.clearTimeout(scanTimeoutRef.current);
+          scanTimeoutRef.current = null;
+        }
+
+        const payload = event.data.payload || {};
+        const rawGroups = Array.isArray(payload.groups) ? payload.groups : [];
+        const existingUrls = new Set(
+          groups.map(g => (normalizeGroupUrl(g.url) || g.url).toLowerCase())
+        );
+        const seenInScan = new Set<string>();
+        const validDiscovered: DiscoveredGroup[] = [];
+
+        for (const rg of rawGroups) {
+          if (!rg || !rg.url || isInvalidGroupName(rg.name)) continue;
+          const cleanUrl = normalizeGroupUrl(rg.url);
+          if (!cleanUrl) continue;
+          const key = cleanUrl.toLowerCase();
+          if (seenInScan.has(key)) continue;
+          seenInScan.add(key);
+
+          validDiscovered.push({
+            id: 'disc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8),
+            name: rg.name.replace(/\s+/g, ' ').trim(),
+            url: cleanUrl,
+            category: rg.category || 'Meus Grupos',
+            membersCount: Number(rg.membersCount) || 0,
+            selected: !existingUrls.has(key),
+          });
+        }
+
+        setScanProgress(100);
+        setIsScanning(false);
+
+        if (validDiscovered.length > 0) {
+          setDiscoveredGroups(validDiscovered);
+          setScanError(null);
+          setScanStep(`Concluído! ${validDiscovered.length} grupos reais da sua lista foram encontrados.`);
+        } else {
+          setDiscoveredGroups([]);
+          setScanError(
+            payload.error ||
+              'Nenhum grupo foi retornado pela extensão. Verifique se você está logado no Facebook com a extensão v3.3.5 instalada, ou use a aba "Extrator Rápido (Console F12)" ao lado.'
+          );
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [groups]);
 
   // New group form
   const [newName, setNewName] = useState('');
@@ -107,158 +224,10 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
   const handleBulkImport = () => {
     const lines = bulkInput.split('\n').map(l => l.trim()).filter(Boolean);
-    const newItems: FacebookGroup[] = [];
-
-    for (const line of lines) {
-      let name = '';
-      let url = '';
-
-      if (line.includes('|')) {
-        const parts = line.split('|');
-        name = parts[0].trim();
-        url = parts[1].trim();
-      } else if (line.startsWith('http')) {
-        url = line;
-        const slug = line.split('/').filter(Boolean).pop() || 'Grupo Importado';
-        name = 'Grupo ' + slug.replace(/[-_]/g, ' ');
-      }
-
-      if (url) {
-        newItems.push({
-          id: 'grp_' + Math.random().toString(36).substring(2, 9),
-          name: name || 'Grupo do Facebook',
-          url,
-          category: 'Importados',
-          membersCount: Math.floor(Math.random() * 40000) + 5000,
-          status: 'ready',
-          postCount: 0,
-          tags: ['Importado'],
-        });
-      }
-    }
-
-    if (newItems.length > 0) {
-      onUpdateGroups([...groups, ...newItems]);
-      setBulkInput('');
-      setShowBulkModal(false);
-    }
-  };
-
-  // --- AUTOMATIC GROUP SCANNER WORKFLOW ---
-  const handleStartAutoScan = async () => {
-    setIsScanning(true);
-    setScanProgress(15);
-    setScanStep('1/4: Conectando à aba ativa do Facebook (facebook.com/groups/joins/)...');
-
-    await sleep(1400);
-    setScanProgress(45);
-    setScanStep('2/4: Identificando grupos em que o seu perfil é membro...');
-
-    await sleep(1500);
-    setScanProgress(75);
-    setScanStep('3/4: Rolando página para carregar todos os grupos e permissões...');
-
-    await sleep(1600);
-    setScanProgress(100);
-    setScanStep('4/4: Varredura concluída com sucesso!');
-
-    // Lista de grupos encontrados da conta
-    const scanned: DiscoveredGroup[] = [
-      {
-        id: 'disc_01',
-        name: 'Feira Orgânica & Produtos Naturais Brasil',
-        url: 'https://www.facebook.com/groups/feiraorganicabrasil',
-        category: 'Alimentação & Saúde',
-        membersCount: 64200,
-        selected: true,
-      },
-      {
-        id: 'disc_02',
-        name: 'Clube das Vitaminas, Detox e Sucos Saudáveis',
-        url: 'https://www.facebook.com/groups/clubedasvitaminasdetox',
-        category: 'Gastronomia Fit',
-        membersCount: 88500,
-        selected: true,
-      },
-      {
-        id: 'disc_03',
-        name: 'Comerciantes de Hortifrúti, Polpas e Frutas SP',
-        url: 'https://www.facebook.com/groups/comercianteshortifrutisp',
-        category: 'Comércio / B2B',
-        membersCount: 39100,
-        selected: true,
-      },
-      {
-        id: 'disc_04',
-        name: 'Empreendedores do Ramo Alimentício & Lanchonetes',
-        url: 'https://www.facebook.com/groups/empreendedoresalimenticiolanches',
-        category: 'Negócios',
-        membersCount: 47800,
-        selected: true,
-      },
-      {
-        id: 'disc_05',
-        name: 'Receitas Rápidas, Marmitas e Vida Saudável',
-        url: 'https://www.facebook.com/groups/receitasrapidasvidasaudavel',
-        category: 'Culinária',
-        membersCount: 112000,
-        selected: true,
-      },
-      {
-        id: 'disc_06',
-        name: 'Feira Livre e Vendas Zona Leste e ABC',
-        url: 'https://www.facebook.com/groups/feiralivrezonalestesp',
-        category: 'Vendas Locais',
-        membersCount: 52300,
-        selected: true,
-      }
-    ];
-
-    // Filtra grupos que já estejam cadastrados pelo URL
-    const existingUrls = new Set(groups.map(g => g.url.toLowerCase().replace(/\/$/, '')));
-    const filtered = scanned.map(sg => ({
-      ...sg,
-      selected: !existingUrls.has(sg.url.toLowerCase().replace(/\/$/, ''))
-    }));
-
-    setDiscoveredGroups(filtered);
-    setIsScanning(false);
-  };
-
-  const handleToggleDiscoveredGroup = (id: string) => {
-    setDiscoveredGroups(prev =>
-      prev.map(g => (g.id === id ? { ...g, selected: !g.selected } : g))
+    const existingUrls = new Set(
+      groups.map(g => (normalizeGroupUrl(g.url) || g.url).toLowerCase())
     );
-  };
-
-  const handleImportDiscoveredGroups = () => {
-    const toImport = discoveredGroups.filter(g => g.selected);
-    if (toImport.length === 0) {
-      alert('Selecione pelo menos um grupo para importar.');
-      return;
-    }
-
-    const newGroups: FacebookGroup[] = toImport.map(dg => ({
-      id: 'grp_' + Date.now() + '_' + Math.random().toString(36).substring(7),
-      name: dg.name,
-      url: dg.url,
-      category: dg.category,
-      membersCount: dg.membersCount,
-      status: 'ready',
-      postCount: 0,
-      tags: ['Auto-Detectado', dg.category.split(' ')[0]],
-    }));
-
-    onUpdateGroups([...groups, ...newGroups]);
-    setShowAutoPullModal(false);
-    setDiscoveredGroups([]);
-  };
-
-  const handleImportConsoleOutput = () => {
-    if (!consoleInput.trim()) return;
-
-    const lines = consoleInput.split('\n').map(l => l.trim()).filter(Boolean);
-    const imported: FacebookGroup[] = [];
+    const newItems: FacebookGroup[] = [];
 
     for (const line of lines) {
       let name = '';
@@ -270,37 +239,159 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
         url = parts[1].trim();
       } else if (line.includes('facebook.com/groups/')) {
         url = line.trim();
-        const slug = line.split('/groups/')[1]?.split('/')[0]?.split('?')[0] || 'Grupo';
-        name = 'Grupo ' + slug.replace(/[-_.]/g, ' ');
+        const slug = line.split('/groups/')[1]?.split('/')[0]?.split('?')[0] || '';
+        name = slug.replace(/[-_.]/g, ' ').trim();
       }
 
-      if (url && url.includes('facebook.com/groups/')) {
-        imported.push({
-          id: 'grp_' + Date.now() + '_' + Math.random().toString(36).substring(7),
-          name: name || 'Grupo do Facebook',
-          url: url.startsWith('http') ? url : 'https://' + url,
-          category: 'Sincronizado',
-          membersCount: 25000,
-          status: 'ready',
-          postCount: 0,
-          tags: ['Sincronizado'],
-        });
+      const cleanUrl = normalizeGroupUrl(url);
+      if (!cleanUrl || isInvalidGroupName(name)) continue;
+
+      const urlKey = cleanUrl.toLowerCase();
+      if (existingUrls.has(urlKey)) continue;
+      existingUrls.add(urlKey);
+
+      newItems.push({
+        id: 'grp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
+        name: name.replace(/\s+/g, ' ').trim(),
+        url: cleanUrl,
+        category: 'Meus Grupos',
+        membersCount: 0,
+        status: 'ready',
+        postCount: 0,
+        tags: ['Importado'],
+      });
+    }
+
+    if (newItems.length > 0) {
+      onUpdateGroups([...groups, ...newItems]);
+      setBulkInput('');
+      setShowBulkModal(false);
+    } else {
+      alert('Nenhum grupo novo com nome válido foi encontrado para importar.');
+    }
+  };
+
+  // --- REAL AUTOMATIC GROUP SCANNER WORKFLOW (SEM INVENTAR GRUPOS) ---
+  const handleStartAutoScan = () => {
+    setIsScanning(true);
+    setScanError(null);
+    setDiscoveredGroups([]);
+    setScanProgress(15);
+    setScanStep('1/3: Solicitando à Extensão Chrome leitura da sua lista em facebook.com/groups/joins/...');
+
+    if (scanTimeoutRef.current) {
+      window.clearTimeout(scanTimeoutRef.current);
+    }
+
+    // Dispara comando real para a Extensão Chrome abrir facebook.com/groups/joins/ e ler os grupos reais
+    window.postMessage({ type: 'AUTOPOST_EXTRACT_GROUPS' }, '*');
+
+    scanTimeoutRef.current = window.setTimeout(() => {
+      setIsScanning(false);
+      setScanProgress(0);
+      setScanError(
+        'A extensão não respondeu à varredura automática (atualize para a extensão v3.3.5 no botão verde do topo) ou use a aba "Extrator Rápido (Console F12)" ao lado para puxar seus grupos em 2 segundos.'
+      );
+    }, 18000);
+  };
+
+  const handleToggleDiscoveredGroup = (id: string) => {
+    setDiscoveredGroups(prev =>
+      prev.map(g => (g.id === id ? { ...g, selected: !g.selected } : g))
+    );
+  };
+
+  const handleImportDiscoveredGroups = () => {
+    const toImport = discoveredGroups.filter(g => g.selected && !isInvalidGroupName(g.name));
+    if (toImport.length === 0) {
+      alert('Selecione pelo menos um grupo válido para importar.');
+      return;
+    }
+
+    const existingUrls = new Set(
+      groups.map(g => (normalizeGroupUrl(g.url) || g.url).toLowerCase())
+    );
+    const newGroups: FacebookGroup[] = [];
+
+    for (const dg of toImport) {
+      const cleanUrl = normalizeGroupUrl(dg.url);
+      if (!cleanUrl) continue;
+      const key = cleanUrl.toLowerCase();
+      if (existingUrls.has(key)) continue;
+      existingUrls.add(key);
+
+      newGroups.push({
+        id: 'grp_' + Date.now() + '_' + Math.random().toString(36).substring(7),
+        name: dg.name.replace(/\s+/g, ' ').trim(),
+        url: cleanUrl,
+        category: dg.category || 'Meus Grupos',
+        membersCount: dg.membersCount || 0,
+        status: 'ready',
+        postCount: 0,
+        tags: ['Meus Grupos'],
+      });
+    }
+
+    onUpdateGroups([...groups, ...newGroups]);
+    setShowAutoPullModal(false);
+    setDiscoveredGroups([]);
+  };
+
+  const handleImportConsoleOutput = () => {
+    if (!consoleInput.trim()) return;
+
+    const lines = consoleInput.split('\n').map(l => l.trim()).filter(Boolean);
+    const existingUrls = new Set(
+      groups.map(g => (normalizeGroupUrl(g.url) || g.url).toLowerCase())
+    );
+    const imported: FacebookGroup[] = [];
+
+    for (const line of lines) {
+      let name = '';
+      let url = '';
+
+      if (line.includes('|')) {
+        const parts = line.split('|');
+        name = parts[0].trim();
+        url = parts[1].trim();
+      } else {
+        continue;
       }
+
+      // Ignora completamente linhas com "Ver grupo", "Grupo FB", etc.
+      if (isInvalidGroupName(name)) continue;
+
+      const cleanUrl = normalizeGroupUrl(url);
+      if (!cleanUrl) continue;
+
+      const urlKey = cleanUrl.toLowerCase();
+      if (existingUrls.has(urlKey)) continue;
+      existingUrls.add(urlKey);
+
+      imported.push({
+        id: 'grp_' + Date.now() + '_' + Math.random().toString(36).substring(7),
+        name: name.replace(/\s+/g, ' ').trim(),
+        url: cleanUrl,
+        category: 'Meus Grupos',
+        membersCount: 0,
+        status: 'ready',
+        postCount: 0,
+        tags: ['Sincronizado'],
+      });
     }
 
     if (imported.length > 0) {
       onUpdateGroups([...groups, ...imported]);
       setConsoleInput('');
       setShowAutoPullModal(false);
-      alert(`${imported.length} grupos importados com sucesso!`);
+      alert(`${imported.length} grupos reais da sua lista foram importados com sucesso!`);
     } else {
-      alert('Nenhum grupo válido do Facebook foi encontrado no texto colado.');
+      alert('Nenhum grupo novo válido foi encontrado (itens "Ver grupo", "Grupo FB" ou duplicados foram ignorados).');
     }
   };
 
   const handleCopyConsoleScript = () => {
-    const script = `copy(Array.from(document.querySelectorAll('a[href*="/groups/"]')).filter(a => !a.href.match(/(feed|discover|create|notifications|search)/)).map(a => (a.innerText.trim().split('\\n')[0] || 'Grupo FB') + ' | ' + a.href.split('?')[0]).filter((v,i,a) => a.indexOf(v)===i && v.includes('/groups/')).join('\\n')); console.log('✅ Grupos copiados! Agora cole no AutoPost FB.');`;
-    navigator.clipboard.writeText(script);
+    navigator.clipboard.writeText(CONSOLE_EXTRACTOR_SCRIPT);
     setCopiedConsoleCode(true);
     setTimeout(() => setCopiedConsoleCode(false), 2500);
   };
@@ -423,6 +514,22 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
             <RefreshCw className="w-4 h-4" />
           </button>
 
+          {groups.length > 0 && (
+            <button
+              onClick={() => {
+                if (confirm('Deseja limpar toda a lista de grupos cadastrados?')) {
+                  onUpdateGroups([]);
+                  onDeselectAllGroups();
+                }
+              }}
+              title="Limpar todos os grupos da lista"
+              className="px-3 py-2 text-xs font-medium text-rose-400 bg-slate-900 border border-slate-800 hover:bg-rose-500/10 hover:border-rose-500/30 rounded-xl transition flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Limpar Lista</span>
+            </button>
+          )}
+
           <button
             onClick={exportGroupsCSV}
             title="Exportar CSV"
@@ -432,6 +539,21 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Empty State when no groups are registered */}
+      {groups.length === 0 && (
+        <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-8 text-center space-y-3">
+          <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto text-blue-400">
+            <Users className="w-6 h-6" />
+          </div>
+          <h3 className="text-sm font-bold text-white">
+            Sua lista está limpa (sem grupos inventados)
+          </h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+            Clique em <strong>"Puxar Grupos Automaticamente"</strong> acima para importar exclusivamente os grupos reais da sua lista no Facebook (<code className="text-blue-300">facebook.com/groups/joins/</code>).
+          </p>
+        </div>
+      )}
 
       {/* Group Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -630,6 +752,26 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                     </div>
                   )}
 
+                  {/* Error or Fallback Notice (Sem inventar grupos) */}
+                  {scanError && !isScanning && (
+                    <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 space-y-3">
+                      <div className="flex items-start gap-2.5">
+                        <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <p className="leading-relaxed">{scanError}</p>
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setAutoPullTab('console')}
+                          className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-semibold rounded-lg border border-amber-500/40 transition flex items-center gap-1.5"
+                        >
+                          <Terminal className="w-3.5 h-3.5" />
+                          <span>Usar Extrator Rápido (Console F12)</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Discovered Groups List */}
                   {discoveredGroups.length > 0 && !isScanning && (
                     <div className="space-y-3">
@@ -710,8 +852,8 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                     </ol>
 
                     <div className="relative mt-2">
-                      <pre className="p-3 bg-slate-900 rounded-xl font-mono text-[11px] text-indigo-300 overflow-x-auto border border-slate-800">
-                        {`copy(Array.from(document.querySelectorAll('a[href*="/groups/"]')).filter(a => !a.href.match(/(feed|discover|create|notifications|search)/)).map(a => (a.innerText.trim().split('\\n')[0] || 'Grupo FB') + ' | ' + a.href.split('?')[0]).filter((v,i,a) => a.indexOf(v)===i && v.includes('/groups/')).join('\\n'))`}
+                      <pre className="p-3 bg-slate-900 rounded-xl font-mono text-[11px] text-indigo-300 overflow-x-auto border border-slate-800 max-h-32">
+                        {CONSOLE_EXTRACTOR_SCRIPT}
                       </pre>
                       <button
                         onClick={handleCopyConsoleScript}

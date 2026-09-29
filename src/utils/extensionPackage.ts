@@ -7,7 +7,7 @@ export interface ExtensionFile {
   content: string;
 }
 
-export const EXTENSION_VERSION = '3.3.4';
+export const EXTENSION_VERSION = '3.3.5';
 
 export function getExtensionFiles(): ExtensionFile[] {
   const manifest = `{
@@ -111,6 +111,12 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.action === 'CAMPAIGN_FINISHED') {
     window.postMessage({ type: 'AUTOPOST_CAMPAIGN_FINISHED', payload: message.payload }, '*');
   }
+  if (message.action === 'EXTRACT_GROUPS_STEP') {
+    window.postMessage({ type: 'AUTOPOST_EXTRACT_GROUPS_STEP', payload: message.payload }, '*');
+  }
+  if (message.action === 'GROUPS_EXTRACTED') {
+    window.postMessage({ type: 'AUTOPOST_GROUPS_EXTRACTED', payload: message.payload }, '*');
+  }
 });
 `;
 
@@ -156,7 +162,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (message.action === 'EXTRACT_GROUPS') {
+    runExtractGroupsWorkflow();
+    sendResponse({ started: true });
+    return true;
+  }
 });
+
+async function runExtractGroupsWorkflow() {
+  notifyDashboard('EXTRACT_GROUPS_STEP', {
+    progress: 20,
+    step: '1/3: Abrindo sua lista oficial de grupos no Facebook (facebook.com/groups/joins/)...'
+  });
+  let tempTab = null;
+  try {
+    tempTab = await chrome.tabs.create({
+      url: 'https://www.facebook.com/groups/joins/?nav_source=tab',
+      active: true
+    });
+    await wait(6500);
+
+    notifyDashboard('EXTRACT_GROUPS_STEP', {
+      progress: 65,
+      step: '2/3: Lendo e rolando sua lista real de grupos (ignorando botões "Ver grupo" e sugestões)...'
+    });
+
+    let extractedGroups = [];
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const res = await chrome.tabs.sendMessage(tempTab.id, {
+          action: 'EXTRACT_FACEBOOK_GROUPS'
+        });
+        if (res && Array.isArray(res.groups)) {
+          extractedGroups = res.groups;
+          break;
+        }
+      } catch (err) {
+        await wait(1500);
+      }
+    }
+
+    if (tempTab && tempTab.id) {
+      try { await chrome.tabs.remove(tempTab.id); } catch (e) {}
+    }
+
+    notifyDashboard('GROUPS_EXTRACTED', {
+      success: true,
+      groups: extractedGroups
+    });
+  } catch (err) {
+    if (tempTab && tempTab.id) {
+      try { await chrome.tabs.remove(tempTab.id); } catch (e) {}
+    }
+    notifyDashboard('GROUPS_EXTRACTED', {
+      success: false,
+      error: err.message || 'Falha ao extrair grupos da página do Facebook.',
+      groups: []
+    });
+  }
+}
 
 function notifyDashboard(action, payload) {
   try {
@@ -392,8 +457,13 @@ if (window.top === window.self) {
       }
 
       if (request.action === 'EXTRACT_FACEBOOK_GROUPS') {
-        const groups = extractUserGroupsFromPage();
-        sendResponse({ success: true, groups });
+        extractUserGroupsWithScroll()
+          .then((groups) => {
+            sendResponse({ success: true, groups });
+          })
+          .catch((err) => {
+            sendResponse({ success: false, groups: [], error: err.message });
+          });
         return true;
       }
     });
@@ -910,38 +980,130 @@ function findSubmitButtonQuick(dialog) {
   return null;
 }
 
-function extractUserGroupsFromPage() {
+async function extractUserGroupsWithScroll() {
+  const accumulated = new Map();
+  extractUserGroupsFromPage(accumulated);
+
+  for (let i = 0; i < 3; i++) {
+    window.scrollBy({ top: 1100, behavior: 'smooth' });
+    await sleep(900);
+    extractUserGroupsFromPage(accumulated);
+  }
+
+  window.scrollTo({ top: 0, behavior: 'instant' });
+  return Array.from(accumulated.values());
+}
+
+function isValidExtractedGroupName(raw) {
+  if (!raw) return false;
+  const s = raw.replace(/\\s+/g, ' ').trim();
+  if (s.length < 2 || s.length > 140) return false;
+  const low = s.toLowerCase();
+  const invalidExact = new Set([
+    'ver grupo', 'view group', 'visitar', 'visitar grupo', 'abrir', 'acessar',
+    'grupo fb', 'grupo do facebook', 'grupo', 'grupos', 'groups', 'seus grupos', 'your groups',
+    'ver tudo', 'see all', 'ver mais', 'see more', 'mostrar mais',
+    'participar', 'participar do grupo', 'join', 'join group', 'participando', 'joined',
+    'criar novo grupo', 'criar grupo', 'create new group',
+    'seu feed', 'your feed', 'descobrir', 'discover', 'notificações', 'notifications',
+    'configurações', 'settings', 'fixar', 'desafixar', 'mais', 'compartilhar', 'convidar',
+    'público', 'privado', 'public', 'private', 'admin', 'administrador', 'moderador',
+    'todos os grupos dos quais você participa', 'grupos que você gerencia',
+    'grupos dos quais você participa', 'sugestões para você', 'mais sugestões'
+  ]);
+  if (invalidExact.has(low)) return false;
+  if (/^(última atividade|last active|atividade recente|última visita|há\\s+\\d|ativo há|\\d+\\s*(mil|k|m)?\\s*(membro|member|publicaç|post|visita)|novo\\b|\\+\\d+$|você gerencia|solicitação|pendente|grupo\\s+\\d+$)/i.test(low)) {
+    return false;
+  }
+  return true;
+}
+
+function getGroupSlugFromHref(href) {
+  try {
+    const u = new URL(href, window.location.origin);
+    const m = u.pathname.match(/^\\/groups\\/([^/?#]+)\\/?$/i);
+    if (!m) return null;
+    const slug = m[1];
+    if (['feed','discover','create','notifications','joins','member','search','categories','settings','yours','browse','pending','archived'].includes(slug.toLowerCase())) {
+      return null;
+    }
+    return slug;
+  } catch (e) {
+    return null;
+  }
+}
+
+function extractUserGroupsFromPage(foundMap) {
+  const found = foundMap || new Map();
   const anchors = Array.from(document.querySelectorAll('a[href*="/groups/"]'));
-  const found = new Map();
 
   for (const a of anchors) {
-    const href = a.href || '';
-    if (href.match(/\\/(feed|discover|create|notifications|search|categories)\\/?(\\?|$)/i)) continue;
+    const groupSlug = getGroupSlugFromHref(a.href);
+    if (!groupSlug) continue;
 
-    const match = href.match(/https?:\\/\\/(www\\.)?facebook\\.com\\/groups\\/([^/?#]+)/i);
-    if (!match) continue;
-
-    const groupSlug = match[2];
-    if (['feed', 'discover', 'create', 'notifications', 'joins', 'member'].includes(groupSlug)) continue;
+    const slugKey = groupSlug.toLowerCase();
+    if (found.has(slugKey)) continue;
 
     const groupUrl = 'https://www.facebook.com/groups/' + groupSlug + '/';
-    let groupName = (a.innerText || a.getAttribute('aria-label') || '').trim();
 
-    groupName = groupName.split('\\n')[0].trim();
-    if (groupName.toLowerCase().startsWith('grupo:')) groupName = groupName.slice(6).trim();
-    if (groupName.startsWith('+')) groupName = groupName.slice(1).trim();
-
-    if (!groupName || groupName.length < 3 || groupName.toLowerCase() === 'ver tudo' || groupName.toLowerCase() === 'grupos') {
-      groupName = 'Grupo ' + groupSlug.replace(/[-_.]/g, ' ');
+    // Sobe na árvore DOM até encontrar o container exclusivo deste card de grupo
+    let card = a;
+    let p = a.parentElement;
+    for (let i = 0; i < 7 && p && p !== document.body; i++) {
+      const linksInP = Array.from(p.querySelectorAll('a[href*="/groups/"]'));
+      const slugsInP = new Set(linksInP.map(l => {
+        const s = getGroupSlugFromHref(l.href);
+        return s ? s.toLowerCase() : null;
+      }).filter(Boolean));
+      if (slugsInP.size <= 1) {
+        card = p;
+        p = p.parentElement;
+      } else {
+        break;
+      }
     }
 
-    if (!found.has(groupUrl)) {
-      found.set(groupUrl, {
+    // Ignora cards de "Sugestões" (grupos em que o usuário NÃO participa têm botão "Participar")
+    const cardLines = (card.innerText || '').split('\\n').map(l => l.trim()).filter(Boolean);
+    const isSuggested = cardLines.some(l => /^(participar|participar do grupo|join|join group)$/i.test(l));
+    if (isSuggested) continue;
+
+    // 1. Tenta extrair o nome diretamente do link atual
+    let groupName = '';
+    const aLines = (a.innerText || '').split('\\n').map(l => l.trim()).filter(Boolean);
+    for (const line of aLines) {
+      if (isValidExtractedGroupName(line)) {
+        groupName = line;
+        break;
+      }
+    }
+
+    // 2. Se o link atual era o botão "Ver grupo" ou miniatura vazia, pega o título real dentro do card do grupo
+    if (!groupName && card !== a) {
+      for (const line of cardLines) {
+        if (isValidExtractedGroupName(line)) {
+          groupName = line;
+          break;
+        }
+      }
+    }
+
+    // 3. Fallback aria-label caso seja um nome válido (e não "Ver grupo")
+    if (!groupName) {
+      const aria = (a.getAttribute('aria-label') || '').trim();
+      if (isValidExtractedGroupName(aria)) {
+        groupName = aria;
+      }
+    }
+
+    // NUNCA inventa "Grupo FB" ou "Ver grupo": só adiciona se encontrou o nome real do grupo
+    if (groupName) {
+      found.set(slugKey, {
         name: groupName,
         url: groupUrl,
         slug: groupSlug,
-        category: 'Geral',
-        membersCount: 15000 + Math.floor(Math.random() * 60000)
+        category: 'Meus Grupos',
+        membersCount: 0
       });
     }
   }
